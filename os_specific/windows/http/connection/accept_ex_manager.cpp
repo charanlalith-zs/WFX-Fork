@@ -4,7 +4,9 @@ namespace WFX::OSSpecific {
 
 bool AcceptExManager::Initialize(WFXSocket listenSocket, HANDLE iocp, const AcceptedConnectionCallback& cb)
 {
-    // Rest of the main stuff
+    // Sanity check
+    if(!cb) return logger_.Error("[AcceptExManager]: Failed to load callback function"), false;
+
     acceptCallback_ = cb;
     listenSocket_   = listenSocket;
     iocp_           = iocp;
@@ -26,13 +28,14 @@ bool AcceptExManager::Initialize(WFXSocket listenSocket, HANDLE iocp, const Acce
     );
 
     if(result == SOCKET_ERROR || !lpfnAcceptEx)
-        return logger_.Error("Failed to load AcceptEx"), false;
+        return logger_.Error("[AcceptExManager]: Failed to load AcceptEx"), false;
 
-    contexts_.fill({});
+    // Zero out all the data for use
+    memset(contexts_.data(), 0, sizeof(contexts_));
 
     for(int i = 0; i < MAX_SLOTS; ++i) {
         if(!PostAcceptAtSlot(i)) {
-            logger_.Error("AcceptExManager: Failed to initialize AcceptEx at slot ", i);
+            logger_.Error("[AcceptExManager]: Failed to initialize AcceptEx at slot ", i);
             return false;
         }
     }
@@ -43,8 +46,6 @@ bool AcceptExManager::Initialize(WFXSocket listenSocket, HANDLE iocp, const Acce
 
 void AcceptExManager::DeInitialize()
 {
-    std::lock_guard<std::mutex> lock(reuseMutex_);
-
     for(int i = 0; i < MAX_SLOTS; ++i)
     {
         if(!(activeSlotsBits_ & (1ULL << i)))
@@ -73,13 +74,13 @@ void AcceptExManager::HandleAcceptCompletion(PerIoContext* ctx)
     WFXSocket client = ctx->acceptSocket;
 
     if(client == WFX_INVALID_SOCKET) {
-        logger_.Error("AcceptExManager: Invalid socket on completion.");
+        logger_.Error("[AcceptExManager]: Invalid socket on completion.");
         RepostAcceptAtSlot(slot);
         return;
     }
 
     if(!AssociateWithIOCP(client)) {
-        logger_.Error("AcceptExManager: Failed to associate accepted socket with IOCP");
+        logger_.Error("[AcceptExManager]: Failed to associate accepted socket with IOCP");
         closesocket(client);
         RepostAcceptAtSlot(slot);
         return;
@@ -87,14 +88,16 @@ void AcceptExManager::HandleAcceptCompletion(PerIoContext* ctx)
     
     setsockopt(client, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&listenSocket_, sizeof(listenSocket_));
 
+    // Performance socket tuning
+    int one = 1;
+    setsockopt(client, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(one));
+    setsockopt(client, SOL_SOCKET, SO_REUSEADDR, (char*)&one, sizeof(one));
+
+    // Requeue immediately to minimize accept latency
     RepostAcceptAtSlot(slot);
 
-    if(ctx->callbackHandler)
-        ctx->callbackHandler(client);
-    else {
-        logger_.Warn("AcceptExManager: No callback set for accepted socket.");
-        closesocket(client);
-    }
+    // Call the callback to pass control to higher layers
+    acceptCallback_(client);
 }
 
 inline void AcceptExManager::SetSlot(int index)
@@ -107,23 +110,12 @@ inline void AcceptExManager::ClearSlot(int index)
     activeSlotsBits_ &= ~(1ULL << index);
 }
 
-inline int AcceptExManager::FindFreeSlot()
-{
-    if(~activeSlotsBits_ == 0) return -1;
-    unsigned long idx;
-#if defined(_MSC_VER)
-    _BitScanForward64(&idx, ~activeSlotsBits_);
-#else
-    idx = __builtin_ctzll(~activeSlotsBits_);
-#endif
-    return static_cast<int>(idx);
-}
-
 int AcceptExManager::GetSlotFromPointer(PerIoContext* ctx)
 {
-    uintptr_t base = reinterpret_cast<uintptr_t>(&contexts_[0]);
-    uintptr_t ptr = reinterpret_cast<uintptr_t>(ctx);
-    return static_cast<int>((ptr - base) / sizeof(PerIoContext));
+    // Current Address - Base Address gives us the index based on how pointer arithmetic works. Pretty cool
+    return static_cast<int>(
+        (reinterpret_cast<uintptr_t>(ctx) - reinterpret_cast<uintptr_t>(&contexts_[0])) / sizeof(PerIoContext)
+    );
 }
 
 bool AcceptExManager::AssociateWithIOCP(WFXSocket sock)
@@ -134,30 +126,41 @@ bool AcceptExManager::AssociateWithIOCP(WFXSocket sock)
 void AcceptExManager::RepostAcceptAtSlot(int slot)
 {
     ClearSlot(slot);
-    if(!PostAcceptAtSlot(slot)) {
-        std::lock_guard<std::mutex> lock(reuseMutex_);
-        int fallbackSlot = FindFreeSlot();
-        
-        if(fallbackSlot >= 0)
-            PostAcceptAtSlot(fallbackSlot);
-        else
-            logger_.Error("AcceptExManager: All AcceptEx slots exhausted — recovery failed.");
-    }
+
+    // Try original slot — fast path
+    if(PostAcceptAtSlot(slot)) return;
+
+    // Calculate fallback from available slots
+    uint64_t available = ~activeSlotsBits_;
+    unsigned long fallbackIdx;
+    bool hasFree;
+
+#if defined(_MSC_VER)
+    hasFree = _BitScanForward64(&fallbackIdx, available);
+#else
+    hasFree = (available != 0);
+    fallbackIdx = __builtin_ctzll(available);
+#endif
+
+    // Branchless fallback — only log if this also fails
+    bool success = hasFree && PostAcceptAtSlot(static_cast<int>(fallbackIdx));
+
+    if(!success)
+        logger_.Error("AcceptExManager: All AcceptEx slots exhausted — recovery failed.");
 }
 
 bool AcceptExManager::PostAcceptAtSlot(int slot)
 {
     PerIoContext& ctx = contexts_[slot];
+    ctx.overlapped    = { 0 };
 
-    ZeroMemory(&ctx.overlapped, sizeof(OVERLAPPED));
     ctx.acceptSocket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
     if(ctx.acceptSocket == WFX_INVALID_SOCKET) {
         logger_.Error("AcceptExManager: WSASocket failed at slot ", slot, ", err=", WSAGetLastError());
         return false;
     }
 
-    ctx.operationType   = PerIoOperationType::ACCEPT;
-    ctx.callbackHandler = acceptCallback_;
+    ctx.operationType = PerIoOperationType::ACCEPT;
 
     DWORD bytesReceived = 0;
     BOOL result = lpfnAcceptEx(

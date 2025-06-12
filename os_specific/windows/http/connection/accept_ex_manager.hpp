@@ -34,9 +34,8 @@ struct PerIoData : PerIoBase {
 };
 
 struct PerIoContext : PerIoBase {
-    WFXSocket                  acceptSocket = WFX_INVALID_SOCKET;
-    char                       buffer[2 * (sizeof(SOCKADDR_IN) + 16)];
-    AcceptedConnectionCallback callbackHandler;
+    WFXSocket acceptSocket = WFX_INVALID_SOCKET;
+    char      buffer[2 * (sizeof(SOCKADDR_IN) + 16)];
 };
 
 // Forward declare logger
@@ -62,12 +61,10 @@ private:
 
     std::array<PerIoContext, MAX_SLOTS> contexts_;
     uint64_t                            activeSlotsBits_ = 0;
-    std::mutex                          reuseMutex_;
     AcceptedConnectionCallback          acceptCallback_;
 
     inline void SetSlot(int index);
     inline void ClearSlot(int index);
-    inline int  FindFreeSlot();
     int         GetSlotFromPointer(PerIoContext* ctx);
     bool        AssociateWithIOCP(WFXSocket sock);
     void        RepostAcceptAtSlot(int slot);
