@@ -2,13 +2,12 @@
 #define WFX_CLI_COMMANDS_DEV_HPP
 
 #include <string>
-#include <vector>
 
 #include "utils/logger/logger.hpp"
 
 namespace WFX::CLI {
 
-int RunDevServer(const std::vector<std::string>& args);
+int RunDevServer(const std::string& host, int port);
 
 }  // namespace WFX::CLI
 

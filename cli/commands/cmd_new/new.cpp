@@ -50,11 +50,7 @@ GET("/", [](const Request& req, Response& res) {
     Logger::GetInstance().Info("[WFX]: Project '", projectName, "' created successfully!");
 }
 
-int CreateProject(const std::vector<std::string>& args) {
-    if(args.empty())
-        Logger::GetInstance().Fatal("[WFX]: Please specify a project name. Usage: wfx new <project-name>");
-
-    const std::string projectName = args[0];
+int CreateProject(const std::string& projectName) {
     const std::filesystem::path projectPath = std::filesystem::current_path() / projectName;
 
     if(fs::exists(projectPath))

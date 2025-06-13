@@ -7,40 +7,49 @@
 
 #include "commands/cmd_new/new.hpp"
 #include "commands/cmd_dev/dev.hpp"
+#include "utils/argument_parser/argument_parser.hpp"
 
 namespace WFX {
 
+// For argument parser
+using namespace WFX::Utils;
+
 int WFXEntryPoint(int argc, char* argv[]) {
-    if (argc < 2) {
-        std::cerr << "Usage: wfx <command> [options]\n";
-        return 1;
-    }
+    ArgumentParser parser;
 
-    std::string command = argv[1];
-    std::vector<std::string> args(argv + 2, argv + argc);
+    // --- Command: new ---
+    parser.AddCommand("new", "Create a new WFX project",
+        [](const std::unordered_map<std::string, std::string>&,
+           const std::vector<std::string>& positionalArgs) -> int {
+            if(positionalArgs.empty())
+                Logger::GetInstance().Fatal("[WFX]: Project name required. Usage: wfx new <project-name>");
 
-    if(command == "new")
-        return CLI::CreateProject(args);
+            return CLI::CreateProject(positionalArgs[0]);
+        });
 
-    else if(command == "dev") {
-        return CLI::RunDevServer(args);
-    }
-    else if(command == "build") {
-        std::cout << "TODO: IMPL BUILD MODE\n";
-        return 0;
-    }
-    else if(command == "serve") {
-        std::cout << "TODO: IMPL SERVE MODE\n";
-        return 0;
-    }
-    else {
-        std::cerr << "Unknown command: " << command << "\n";
-        return 1;
-    }
+    // --- Command: dev ---
+    parser.AddCommand("dev", "Start WFX dev server",
+        [](const std::unordered_map<std::string, std::string>& options,
+           const std::vector<std::string>&) -> int {
+            int port = 8000;
+
+            try {
+                port = std::stoi(options.at("--port"));
+            } catch (...) {
+                Logger::GetInstance().Fatal("[WFX]: Invalid port: ", options.at("--port"));
+            }
+
+            return CLI::RunDevServer(options.at("--host"), port);
+        });
+    parser.AddOption("dev", "--host", "Host to bind", false, "127.0.0.1", false);
+    parser.AddOption("dev", "--port", "Port to bind", false, "8080", false);
+
+    return parser.Parse(argc, argv);
 }
 
 }  // namespace WFX
 
+// Entrypoint for the entire thing
 int main(int argc, char* argv[]) {
     return WFX::WFXEntryPoint(argc, argv);
 }

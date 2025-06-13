@@ -4,11 +4,10 @@
 #include "utils/logger/logger.hpp"
 
 #include <string>
-#include <vector>
 
 namespace WFX::CLI {
 
-int CreateProject(const std::vector<std::string>& args);
+int CreateProject(const std::string& projectName);
 
 }  // namespace WFX::New
 

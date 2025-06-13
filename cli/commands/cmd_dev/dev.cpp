@@ -36,27 +36,8 @@ void SignalHandler(int signal)
 }
 #endif
 
-int RunDevServer(const std::vector<std::string>& args)
+int RunDevServer(const std::string& host, int port)
 {
-    std::string host = "127.0.0.1";
-    int port         = 8080;
-
-    // Simple argument parsing: --host <host> --port <port>
-    for (size_t i = 0; i < args.size(); ++i) {
-        if (args[i] == "--host" && i + 1 < args.size()) {
-            host = args[i + 1];
-            ++i;
-        } else if (args[i] == "--port" && i + 1 < args.size()) {
-            try {
-                port = std::stoi(args[i + 1]);
-            }
-            catch (...) {
-                Logger::GetInstance().Fatal("[WFX]: Invalid port: ", args[i + 1]);
-            }
-            ++i;
-        }
-    }
-
 #ifdef _WIN32
     SetConsoleCtrlHandler(ConsoleHandler, TRUE);
 #else
