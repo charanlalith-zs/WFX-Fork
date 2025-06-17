@@ -1,19 +1,18 @@
 #include "accept_ex_manager.hpp"
 
+#include "utils/perf_timer/perf_timer.hpp"
+
 namespace WFX::OSSpecific {
 
-bool AcceptExManager::Initialize(WFXSocket listenSocket, HANDLE iocp, const AcceptedConnectionCallback& cb)
+bool AcceptExManager::Initialize(WFXSocket listenSocket, HANDLE iocp)
 {
-    // Sanity check
-    if(!cb) return logger_.Error("[AcceptExManager]: Failed to load callback function"), false;
+    listenSocket_ = listenSocket;
+    iocp_         = iocp;
 
-    acceptCallback_ = cb;
-    listenSocket_   = listenSocket;
-    iocp_           = iocp;
-
-    // AcceptEx isn't a direct part of WinSock, we need to link it during runtime basically
-    GUID  guidAcceptEx = WSAID_ACCEPTEX;
-    DWORD bytes        = 0;
+    // Load AcceptEx and GetAcceptExSockaddrs
+    GUID guidAcceptEx             = WSAID_ACCEPTEX;
+    GUID guidGetAcceptExSockaddrs = WSAID_GETACCEPTEXSOCKADDRS;
+    DWORD bytes                   = 0;
 
     int result = WSAIoctl(
         listenSocket_,
@@ -29,6 +28,21 @@ bool AcceptExManager::Initialize(WFXSocket listenSocket, HANDLE iocp, const Acce
 
     if(result == SOCKET_ERROR || !lpfnAcceptEx)
         return logger_.Error("[AcceptExManager]: Failed to load AcceptEx"), false;
+
+    result = WSAIoctl(
+        listenSocket_,
+        SIO_GET_EXTENSION_FUNCTION_POINTER,
+        &guidGetAcceptExSockaddrs,
+        sizeof(guidGetAcceptExSockaddrs),
+        &lpfnGetAcceptExSockaddrs,
+        sizeof(lpfnGetAcceptExSockaddrs),
+        &bytes,
+        nullptr,
+        nullptr
+    );
+
+    if(result == SOCKET_ERROR || !lpfnGetAcceptExSockaddrs)
+        return logger_.Error("[AcceptExManager]: Failed to load GetAcceptExSockaddrs"), false;
 
     // Zero out all the data for use
     memset(contexts_.data(), 0, sizeof(contexts_));
@@ -53,17 +67,16 @@ void AcceptExManager::DeInitialize()
 
         PerIoContext& ctx = contexts_[i];
 
-        if(ctx.acceptSocket != WFX_INVALID_SOCKET)
+        if(ctx.socket != WFX_INVALID_SOCKET)
         {
-            closesocket(ctx.acceptSocket);
-            ctx.acceptSocket = WFX_INVALID_SOCKET;
+            closesocket(ctx.socket);
+            ctx.socket = WFX_INVALID_SOCKET;
         }
 
         ClearSlot(i);
     }
 
     activeSlotsBits_ = 0;
-    acceptCallback_ = nullptr;
     
     logger_.Info("[AcceptExManager]: DeInitialized ", MAX_SLOTS, " AcceptEx slots");
 }
@@ -71,7 +84,7 @@ void AcceptExManager::DeInitialize()
 void AcceptExManager::HandleAcceptCompletion(PerIoContext* ctx)
 {
     const int slot   = GetSlotFromPointer(ctx);
-    WFXSocket client = ctx->acceptSocket;
+    WFXSocket client = ctx->socket;
 
     if(client == WFX_INVALID_SOCKET) {
         logger_.Error("[AcceptExManager]: Invalid socket on completion.");
@@ -79,25 +92,46 @@ void AcceptExManager::HandleAcceptCompletion(PerIoContext* ctx)
         return;
     }
 
+    SOCKADDR* localSockaddr     = nullptr;
+    SOCKADDR* remoteSockaddr    = nullptr;
+    int       localSockaddrLen  = 0;
+    int       remoteSockaddrLen = 0;
+
+    // GetAcceptExSockaddrs MUST be called before setsockopt or using the client socket
+    lpfnGetAcceptExSockaddrs(
+        ctx->buffer,
+        0,
+        sizeof(SOCKADDR_IN) + 16,
+        sizeof(SOCKADDR_IN) + 16,
+        &localSockaddr,
+        &localSockaddrLen,
+        &remoteSockaddr,
+        &remoteSockaddrLen
+    );
+
+    setsockopt(client, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&listenSocket_, sizeof(listenSocket_));
+
     if(!AssociateWithIOCP(client)) {
         logger_.Error("[AcceptExManager]: Failed to associate accepted socket with IOCP");
         closesocket(client);
         RepostAcceptAtSlot(slot);
         return;
     }
-    
-    setsockopt(client, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&listenSocket_, sizeof(listenSocket_));
 
-    // Performance socket tuning
+    RepostAcceptAtSlot(slot);
+ 
+    // Safe now to update context and options
+    if(!PostQueuedCompletionStatus(iocp_, 0, (ULONG_PTR)client, &DEFERRED_ACCEPT_HANDLER.overlapped)) {
+        logger_.Error("[AcceptExManager]: Failed to queue deferred accept for socket ", client);
+        closesocket(client);
+    }
+}
+
+void AcceptExManager::HandleSocketOptions(SOCKET client)
+{
     int one = 1;
     setsockopt(client, IPPROTO_TCP, TCP_NODELAY, (char*)&one, sizeof(one));
-    setsockopt(client, SOL_SOCKET, SO_REUSEADDR, (char*)&one, sizeof(one));
-
-    // Requeue immediately to minimize accept latency
-    RepostAcceptAtSlot(slot);
-
-    // Call the callback to pass control to higher layers
-    acceptCallback_(client);
+    // setsockopt(client, SOL_SOCKET, SO_REUSEADDR, (char*)&one, sizeof(one));
 }
 
 inline void AcceptExManager::SetSlot(int index)
@@ -154,8 +188,8 @@ bool AcceptExManager::PostAcceptAtSlot(int slot)
     PerIoContext& ctx = contexts_[slot];
     ctx.overlapped    = { 0 };
 
-    ctx.acceptSocket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
-    if(ctx.acceptSocket == WFX_INVALID_SOCKET) {
+    ctx.socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
+    if(ctx.socket == WFX_INVALID_SOCKET) {
         logger_.Error("AcceptExManager: WSASocket failed at slot ", slot, ", err=", WSAGetLastError());
         return false;
     }
@@ -165,7 +199,7 @@ bool AcceptExManager::PostAcceptAtSlot(int slot)
     DWORD bytesReceived = 0;
     BOOL result = lpfnAcceptEx(
         listenSocket_,
-        ctx.acceptSocket,
+        ctx.socket,
         ctx.buffer,
         0,
         sizeof(SOCKADDR_IN) + 16,
@@ -176,8 +210,8 @@ bool AcceptExManager::PostAcceptAtSlot(int slot)
 
     if(!result && WSAGetLastError() != ERROR_IO_PENDING) {
         logger_.Error("AcceptExManager: AcceptEx failed at slot ", slot, ", err=", WSAGetLastError());
-        closesocket(ctx.acceptSocket);
-        ctx.acceptSocket = WFX_INVALID_SOCKET;
+        closesocket(ctx.socket);
+        ctx.socket = WFX_INVALID_SOCKET;
         return false;
     }
 

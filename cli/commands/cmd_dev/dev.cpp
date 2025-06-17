@@ -43,12 +43,15 @@ int RunDevServer(const std::string& host, int port)
 #else
     std::signal(SIGINT, SignalHandler);
 #endif
+    Logger::GetInstance().SetLevelMask(WFX_LOG_INFO | WFX_LOG_WARNINGS);
 
     WFX::Core::Engine engine;
     engine.Listen(host, port);
 
     Logger::GetInstance().Info("[WFX]: Dev server running at http://", host, ':', port);
     Logger::GetInstance().Info("[WFX]: Press Ctrl+C to stop.");
+
+    // Logger::GetInstance().SetLevelMask(WFX_LOG_NONE);
     
     while(!shouldStop)
         std::this_thread::sleep_for(std::chrono::milliseconds(100));

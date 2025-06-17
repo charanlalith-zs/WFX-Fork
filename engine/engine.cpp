@@ -30,12 +30,12 @@ void Engine::Stop()
 
 void Engine::HandleConnection(WFXSocket socket)
 {
-    connHandler_->Receive(socket, [this, socket](const char* data, size_t len) {
-        this->HandleRequest(socket, data, len);
+    connHandler_->Receive(socket, [this, socket](ReceiveCallbackData data, size_t len) {
+        this->HandleRequest(socket, std::move(data), len);
     });
 }
 
-void Engine::HandleRequest(WFXSocket socket, const char* data, size_t length)
+void Engine::HandleRequest(WFXSocket socket, ReceiveCallbackData data, size_t length)
 {
     // Hardcode the request for now, later we do the do
     std::string httpResp =

@@ -15,45 +15,56 @@ namespace WFX::OSSpecific {
 // I/O operation types for tracking overlapped operations
 enum class PerIoOperationType {
     INVALID = -1,
+    ARM_RECV,
     RECV,
     SEND,
-    ACCEPT
+    ACCEPT,
+    ACCEPT_DEFERRED
 };
 
 struct PerIoBase {
     OVERLAPPED         overlapped{};
     PerIoOperationType operationType = PerIoOperationType::INVALID;
+    WFXSocket          socket        = WFX_INVALID_SOCKET;
 
     ~PerIoBase() = default;
 };
 
 struct PerIoData : PerIoBase {
-    WFXSocket socket = WFX_INVALID_SOCKET;
-    void*     buffer = nullptr;
-    WSABUF    wsaBuf{};
+    WSABUF wsaBuf{};
 };
 
 struct PerIoContext : PerIoBase {
-    WFXSocket acceptSocket = WFX_INVALID_SOCKET;
-    char      buffer[2 * (sizeof(SOCKADDR_IN) + 16)];
+    char buffer[2 * (sizeof(SOCKADDR_IN) + 16)];
 };
+
+// Just to be consistent with IoBase
+struct PostRecvOp : PerIoBase {};
+
+// Used as a tag only
+struct DeferredAcceptHandler : PerIoBase {
+    DeferredAcceptHandler() { operationType = PerIoOperationType::ACCEPT_DEFERRED; }
+};
+static DeferredAcceptHandler DEFERRED_ACCEPT_HANDLER;
 
 // Forward declare logger
 using namespace WFX::Utils;
 
 class AcceptExManager {
 public:
-    constexpr static int MAX_SLOTS = 1024;
+    constexpr static int MAX_SLOTS = 4096;
 
     AcceptExManager() = default;
 
-    bool Initialize(WFXSocket listenSocket, HANDLE iocp, const AcceptedConnectionCallback& cb);
+    bool Initialize(WFXSocket listenSocket, HANDLE iocp);
     void DeInitialize();
     void HandleAcceptCompletion(PerIoContext* ctx);
+    void HandleSocketOptions(SOCKET);
 
 private:
     // IMP
-    LPFN_ACCEPTEX lpfnAcceptEx = nullptr;
+    LPFN_ACCEPTEX             lpfnAcceptEx             = nullptr;
+    LPFN_GETACCEPTEXSOCKADDRS lpfnGetAcceptExSockaddrs = nullptr;
 
     WFXSocket listenSocket_;
     HANDLE    iocp_;
@@ -61,7 +72,6 @@ private:
 
     std::array<PerIoContext, MAX_SLOTS> contexts_;
     uint64_t                            activeSlotsBits_ = 0;
-    AcceptedConnectionCallback          acceptCallback_;
 
     inline void SetSlot(int index);
     inline void ClearSlot(int index);

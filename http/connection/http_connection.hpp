@@ -3,6 +3,7 @@
 
 #include <string>
 #include <functional>
+#include <memory>
 
 #ifdef _WIN32
     #include <WinSock2.h>
@@ -15,7 +16,8 @@
 #endif
 
 // Recieve callback signature around the code
-using RecieveCallback = std::function<void(const char*, size_t)>;
+using ReceiveCallbackData = std::unique_ptr<char[], std::function<void(char*)>>;
+using ReceiveCallback     = std::function<void(ReceiveCallbackData, size_t)>;
 
 // When connection is accepted, upper layers will recieve the connection WFXSocket
 // For that, we need a callback
@@ -32,17 +34,16 @@ public:
     virtual bool Initialize(const std::string& host, int port) = 0;
 
     // Accept a new connection and return a socket descriptor or handle
-    /* DEPRECATED */
-    // virtual WFXSocket AcceptConnection() = 0;
+    virtual void ResumeRecieve(WFXSocket) = 0;
 
     // Read data from socket (Async)
-    virtual void Receive(WFXSocket, RecieveCallback onData) = 0;
+    virtual void Receive(WFXSocket, ReceiveCallback onData) = 0;
 
     // Write data to socket (Async)
-    virtual int Write(int socket, const char* buffer, size_t length) = 0;
+    virtual int Write(WFXSocket socket, const char* buffer, size_t length) = 0;
 
     // Close a client socket
-    virtual void Close(int socket) = 0;
+    virtual void Close(WFXSocket socket) = 0;
 
     // Run the main connection loop (can be used by dev/serve mode)
     virtual void Run(AcceptedConnectionCallback) = 0;

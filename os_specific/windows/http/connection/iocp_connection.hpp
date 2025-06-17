@@ -2,8 +2,10 @@
 #define WFX_WINDOWS_IOCP_CONNECTION_HANDLER_HPP
 
 #include "accept_ex_manager.hpp"
+#include "third_party/concurrent_queue/blockingconcurrentqueue.h"
 #include "http/connection/http_connection.hpp"
-#include "utils/buffer_pool/buffer_pool.hpp"
+#include "utils/fixed_pool/fixed_pool.hpp"
+#include "utils/hash_map/concurrent_hash_map.hpp"
 #include "utils/logger/logger.hpp"
 
 #include <winsock2.h>
@@ -14,7 +16,6 @@
 #include <vector>
 #include <thread>
 #include <atomic>
-#include <unordered_map>
 #include <shared_mutex>
 #include <memory>
 #include <functional>
@@ -25,29 +26,33 @@
 
 namespace WFX::OSSpecific {
 
+using namespace WFX::Utils; // For 'Logger', 'BufferPool' and 'ConcurrentHashMap'
+using namespace moodycamel; // For BlockingConcurrentQueue
+
 class IocpConnectionHandler : public WFX::Core::HttpConnectionHandler {
 public:
     IocpConnectionHandler();
     ~IocpConnectionHandler();
 
     bool Initialize(const std::string& host, int port) override;
-    void Receive(WFXSocket, RecieveCallback onData) override;
-    int  Write(int socket, const char* buffer, size_t length) override;
-    void Close(int socket) override;
+    void ResumeRecieve(WFXSocket) override;
+    void Receive(WFXSocket, ReceiveCallback onData) override;
+    int  Write(WFXSocket socket, const char* buffer, size_t length) override;
+    void Close(WFXSocket socket) override;
 
     // Main function
     void Run(AcceptedConnectionCallback) override;
     void Stop() override;
 
 private:
-    bool CreateWorkerThreads(size_t threadCount = std::thread::hardware_concurrency());
+    bool CreateWorkerThreads(unsigned int iocpThreads, unsigned int offloadThreads);
     void WorkerLoop();
     void SafeDeleteIoData(PerIoData* data);
-    void PostReceive(int socket);
+    void PostReceive(WFXSocket socket);
     void InternalCleanup();
 
 private:
-    // Helper function used in unique_ptr deleter
+    // Helper structs used in unique_ptr deleter
     struct PerIoDataDeleter {
         IocpConnectionHandler* handler;
         
@@ -55,19 +60,28 @@ private:
             handler->SafeDeleteIoData(data);
         }
     };
+
+    struct PostRecvOpDeleter {
+        IocpConnectionHandler* handler;
+
+        void operator()(PostRecvOp* data) const {
+            handler->allocPool_.Free(data, sizeof(PostRecvOp));
+        }
+    };
     
 private:
-    SOCKET                   listenSocket_;
-    HANDLE                   iocp_;
-    std::vector<std::thread> workerThreads_;
-    std::atomic<bool>        running_;
-    std::mutex               connectionMutex_;
+    SOCKET                     listenSocket_ = INVALID_SOCKET;
+    HANDLE                     iocp_         = nullptr;
+    std::mutex                 connectionMutex_;
+    std::atomic<bool>          running_      = false;
+    std::vector<std::thread>   workerThreads_;
+    std::vector<std::thread>   offloadThreads_;
+    AcceptedConnectionCallback acceptCallback_;
 
-    WFX::Utils::BufferPool bufferPool_;
-    WFX::Utils::Logger&    logger_ = WFX::Utils::Logger::GetInstance();
-
-    std::unordered_map<SOCKET, std::function<void(const char*, size_t)>> receiveCallbacks_;
-    std::shared_mutex callbackMutex_;
+    Logger& logger_ = Logger::GetInstance();
+    ConfigurableFixedAllocPool allocPool_{{64, 128, 4096}};
+    ConcurrentHashMap<SOCKET, ReceiveCallback> receiveCallbacks_{1024 * 1024};
+    BlockingConcurrentQueue<std::function<void(void)>> offloadCallbacks_;
 
     // Main shit
     AcceptExManager acceptManager_;

@@ -18,7 +18,7 @@ public:
 
 private:
     void HandleConnection(WFXSocket socket);
-    void HandleRequest(WFXSocket socket, const char* data, size_t length);
+    void HandleRequest(WFXSocket socket, ReceiveCallbackData data, size_t length);
 
     Logger& logger_ = Logger::GetInstance();
 

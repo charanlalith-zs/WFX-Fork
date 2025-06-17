@@ -1,10 +1,12 @@
 #include "iocp_connection.hpp"
+#include "utils/perf_timer/perf_timer.hpp"
+
+#undef max
+#undef min
 
 namespace WFX::OSSpecific {
 
 IocpConnectionHandler::IocpConnectionHandler()
-    : listenSocket_(INVALID_SOCKET), iocp_(nullptr), running_(false),
-      bufferPool_(1024 * 1024, [](std::size_t size) { return size * 2; })
 {
     WSADATA wsaData;
     if(WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
@@ -12,6 +14,8 @@ IocpConnectionHandler::IocpConnectionHandler()
 
     if(LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2)
         logger_.Fatal("Incorrect Winsock version");
+
+    allocPool_.PreWarmAll(32);
 }
 
 IocpConnectionHandler::~IocpConnectionHandler()
@@ -47,28 +51,49 @@ bool IocpConnectionHandler::Initialize(const std::string& host, int port)
     return true;
 }
 
-void IocpConnectionHandler::Receive(WFXSocket socket, RecieveCallback callback)
+void IocpConnectionHandler::ResumeRecieve(WFXSocket socket)
 {
-    {
-        std::unique_lock<std::shared_mutex> lock(callbackMutex_);
-        receiveCallbacks_[socket] = std::move(callback);
-    }
-
+    // Simply 're-arm' WSARecv
     PostReceive(socket);
 }
 
-int IocpConnectionHandler::Write(int socket, const char* buffer, size_t length)
+void IocpConnectionHandler::Receive(WFXSocket socket, ReceiveCallback callback)
 {
-    void* outBuffer = bufferPool_.Lease(length);
+    if(!callback) {
+        logger_.Error("[IOCP]: Invalid callback in 'Recieve'");
+        return;
+    }
+    
+    WFX_PROFILE_BLOCK_START(Recieve_)
+    if(!receiveCallbacks_.Insert(socket, std::move(callback)))
+        logger_.Fatal("[IOCP]: Failed to insert Receive Callback");
+
+    // Hand off PostReceive to IOCP thread. sizeof(PostRecvOp) rounded to 64 bytes
+    PostRecvOp* op = static_cast<PostRecvOp*>(allocPool_.Allocate(sizeof(PostRecvOp)));
+    
+    op->operationType = PerIoOperationType::ARM_RECV;
+    op->socket        = socket;
+    
+    if(!PostQueuedCompletionStatus(iocp_, 0, 0, &op->overlapped)) {
+        logger_.Error("[IOCP]: Failed to queue PostReceive");
+        allocPool_.Free(op, sizeof(PostRecvOp));
+        Close(socket);
+    }
+    WFX_PROFILE_BLOCK_END(Recieve_)
+}
+
+int IocpConnectionHandler::Write(WFXSocket socket, const char* buffer, size_t length)
+{
+    void* outBuffer = allocPool_.Allocate(length);
     if(!outBuffer)
         return -1;
 
-    memcpy(outBuffer, buffer, length);
+    std::memcpy(outBuffer, buffer, length);
 
-    PerIoData* ioData = new PerIoData{};
-    ZeroMemory(&ioData->overlapped, sizeof(ioData->overlapped));
+    PerIoData* ioData = static_cast<PerIoData*>(allocPool_.Allocate(sizeof(PerIoData)));
+
+    ioData->overlapped    = { 0 };
     ioData->operationType = PerIoOperationType::SEND;
-    ioData->buffer        = outBuffer;
     ioData->wsaBuf.buf    = static_cast<char*>(outBuffer);
     ioData->wsaBuf.len    = static_cast<ULONG>(length);
 
@@ -79,18 +104,17 @@ int IocpConnectionHandler::Write(int socket, const char* buffer, size_t length)
         return -1;
     }
 
-    return static_cast<int>(bytesSent);
+    return static_cast<int>(length);
 }
 
-void IocpConnectionHandler::Close(int socket)
+void IocpConnectionHandler::Close(WFXSocket socket)
 {
+    CancelIoEx((HANDLE)socket, NULL);
     shutdown(socket, SD_BOTH);
     closesocket(socket);
 
-    {
-        std::unique_lock<std::shared_mutex> lock(callbackMutex_);
-        receiveCallbacks_.erase(socket);
-    }
+    if(!receiveCallbacks_.Erase(socket))
+        logger_.Warn("[IOCP]: Failed to erase Receive Callback for socket: ", socket);
 }
 
 void IocpConnectionHandler::Run(AcceptedConnectionCallback onAccepted)
@@ -98,13 +122,20 @@ void IocpConnectionHandler::Run(AcceptedConnectionCallback onAccepted)
     logger_.Info("[IOCP]: Starting connection handler...");
     running_ = true;
 
-    if(!acceptManager_.Initialize(listenSocket_, iocp_, onAccepted))
+    if(!onAccepted)
+        logger_.Fatal("[IOCP]: Failed to get 'onAccepted' callback");
+    acceptCallback_ = std::move(onAccepted);
+
+    if(!acceptManager_.Initialize(listenSocket_, iocp_))
         logger_.Fatal("[IOCP]: Failed to initialize AcceptExManager");
 
     logger_.Info("[IOCP]: AcceptExManager initialized with ", AcceptExManager::MAX_SLOTS, " pending accepts.");
 
-    size_t fallbackThreads = std::thread::hardware_concurrency();
-    if(!CreateWorkerThreads(fallbackThreads ? fallbackThreads : 4))
+    unsigned int cores          = std::thread::hardware_concurrency();
+    unsigned int iocpThreads    = std::max(2u, cores);
+    unsigned int offloadThreads = std::max(2u, cores);
+
+    if(!CreateWorkerThreads(iocpThreads, offloadThreads))
         return logger_.Fatal("[IOCP]: Failed to start worker threads.");
 }
 
@@ -117,25 +148,36 @@ void IocpConnectionHandler::Stop()
         PostQueuedCompletionStatus(iocp_, 0, 0, nullptr);
 }
 
-void IocpConnectionHandler::PostReceive(int socket)
+void IocpConnectionHandler::PostReceive(WFXSocket socket)
 {
-    void* buf = bufferPool_.Lease(4096);
+    WFX_PROFILE_BLOCK_START(PostReceive_Lease);
+
+    void* buf = allocPool_.Allocate(4096);
     if(!buf) {
         Close(socket);
         return;
     }
 
-    PerIoData* ioData = new PerIoData{};
-    ZeroMemory(&ioData->overlapped, sizeof(ioData->overlapped));
+    // Ensure pages are touched — avoids kernel-to-user page fault stalls
+    ((volatile char*)buf)[0] = 0;
+
+    WFX_PROFILE_BLOCK_END(PostReceive_Lease);
+
+    WFX_PROFILE_BLOCK_START(PostReceive_New);
+
+    PerIoData* ioData = static_cast<PerIoData*>(allocPool_.Allocate(sizeof(PerIoData)));
+    ioData->overlapped    = { 0 };
     ioData->operationType = PerIoOperationType::RECV;
-    ioData->buffer        = buf;
     ioData->socket        = socket;
     ioData->wsaBuf.buf    = static_cast<char*>(buf);
     ioData->wsaBuf.len    = 4096;
 
+    WFX_PROFILE_BLOCK_END(PostReceive_New);
+
     DWORD flags = 0, bytesRecv = 0;
     int ret = WSARecv(socket, &ioData->wsaBuf, 1, &bytesRecv, &flags, &ioData->overlapped, nullptr);
     if(ret == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING) {
+        logger_.Warn("[IOCP]: WSARecv immediate failure: ", WSAGetLastError());
         SafeDeleteIoData(ioData);
         Close(socket);
     }
@@ -151,7 +193,7 @@ void IocpConnectionHandler::WorkerLoop()
     static_assert(offsetof(PerIoBase, overlapped) == 0, "OVERLAPPED must be first!");
 
     while(running_) {
-        BOOL result = GetQueuedCompletionStatus(iocp_, &bytesTransferred, &key, &overlapped, INFINITE);
+        BOOL result = GetQueuedCompletionStatus(iocp_, &bytesTransferred, &key, &overlapped, 1000);
         if(!result || !overlapped)
             continue;
 
@@ -159,24 +201,51 @@ void IocpConnectionHandler::WorkerLoop()
         PerIoOperationType opType = base->operationType;
 
         switch(opType) {
+            case PerIoOperationType::ARM_RECV:
+            {
+                std::unique_ptr<PostRecvOp, PostRecvOpDeleter> op(static_cast<PostRecvOp*>(base), PostRecvOpDeleter{this});
+                PostReceive(op->socket);
+                break;
+            }
+
             case PerIoOperationType::RECV:
             {
+                WFX_PROFILE_BLOCK_START(RECV_Handle);
                 std::unique_ptr<PerIoData, PerIoDataDeleter> ioData(static_cast<PerIoData*>(base), PerIoDataDeleter{this});
                 SOCKET clientSocket = ioData->socket;
-                RecieveCallback callback;
 
-                {
-                    std::shared_lock<std::shared_mutex> lock(callbackMutex_);
-                    auto it = receiveCallbacks_.find(clientSocket);
-                    if(it != receiveCallbacks_.end())
-                        callback = it->second;
+                // FILTER ZERO-LENGTH (clean disconnect)
+                if(bytesTransferred <= 0) {
+                    Close(clientSocket);
+                    break;
                 }
 
-                if(callback)
-                    callback(static_cast<char*>(ioData->buffer), bytesTransferred);
+                ReceiveCallback callback;
+                if(!receiveCallbacks_.Get(clientSocket, callback))
+                    logger_.Fatal("[IOCP]: Failed to get Receive Callback");
+                
+                // Take ownership of buffer before we free ioData
+                char*  rawBuf = ioData->wsaBuf.buf;
+                size_t rawLen = ioData->wsaBuf.len;
 
-                PostReceive(clientSocket);
-                break; // automatic cleanup via custom deleter
+                ioData->wsaBuf.buf = nullptr;
+                ioData->wsaBuf.len = 0;
+
+                // Enqueue callback to offload thread
+                offloadCallbacks_.enqueue([this, rawBuf, rawLen, cb = std::move(callback)]() mutable {
+                    WFX_PROFILE_BLOCK_START(Offloaded_CB);
+                    // Move buffer into callback with a custom deleter
+                    std::unique_ptr<char[], std::function<void(char*)>> movedBuf(
+                        rawBuf,
+                        [this, rawLen](char* p) { this->allocPool_.Free(p, rawLen); }
+                    );
+
+                    cb(std::move(movedBuf), rawLen);
+                    WFX_PROFILE_BLOCK_END(Offloaded_CB);
+                });
+
+                WFX_PROFILE_BLOCK_END(RECV_Handle);
+                break;
             }
 
             case PerIoOperationType::SEND:
@@ -187,7 +256,24 @@ void IocpConnectionHandler::WorkerLoop()
 
             case PerIoOperationType::ACCEPT:
             {
+                WFX_PROFILE_BLOCK_START(ACCEPT_Handle);
                 acceptManager_.HandleAcceptCompletion(static_cast<PerIoContext*>(base));
+                WFX_PROFILE_BLOCK_END(ACCEPT_Handle);
+                break;
+            }
+
+            case PerIoOperationType::ACCEPT_DEFERRED:
+            {
+                WFX_PROFILE_BLOCK_START(ACCEPT_Deferred);
+                SOCKET client = static_cast<SOCKET>(key);
+                acceptManager_.HandleSocketOptions(client);
+                
+                offloadCallbacks_.enqueue([this, client]() {
+                    acceptCallback_(client);
+                });
+
+                WFX_PROFILE_BLOCK_END(ACCEPT_Deferred);
+                
                 break;
             }
 
@@ -198,10 +284,21 @@ void IocpConnectionHandler::WorkerLoop()
     }
 }
 
-bool IocpConnectionHandler::CreateWorkerThreads(size_t threadCount)
+bool IocpConnectionHandler::CreateWorkerThreads(unsigned int iocpThreads, unsigned int offloadThreads)
 {
-    for(size_t i = 0; i < threadCount; ++i)
+    // Launch IOCP worker threads
+    for(unsigned int i = 0; i < iocpThreads; ++i)
         workerThreads_.emplace_back(&IocpConnectionHandler::WorkerLoop, this);
+
+    // Launch offload callback threads
+    for(unsigned int i = 0; i < offloadThreads; ++i)
+        offloadThreads_.emplace_back([this]() {
+            while(running_) {
+                std::function<void(void)> cb;
+                if(offloadCallbacks_.wait_dequeue_timed(cb, std::chrono::milliseconds(10)))
+                    cb();
+            }
+        });
 
     return true;
 }
@@ -209,16 +306,19 @@ bool IocpConnectionHandler::CreateWorkerThreads(size_t threadCount)
 void IocpConnectionHandler::SafeDeleteIoData(PerIoData* data)
 {
     if(!data) return;
-    if(data->buffer) bufferPool_.Release(data->buffer);
-    delete data;
+    if(data->wsaBuf.buf) allocPool_.Free(data->wsaBuf.buf, data->wsaBuf.len);
+    allocPool_.Free(data, sizeof(PerIoData));
 }
 
 void IocpConnectionHandler::InternalCleanup()
 {
     for(auto& t : workerThreads_)
         if(t.joinable()) t.join();
-
     workerThreads_.clear();
+
+    for(auto& t : offloadThreads_)
+        if(t.joinable()) t.join();
+    offloadThreads_.clear();
 
     acceptManager_.DeInitialize();
 
@@ -231,8 +331,6 @@ void IocpConnectionHandler::InternalCleanup()
         CloseHandle(iocp_);
         iocp_ = nullptr;
     }
-
-    receiveCallbacks_.clear();
 
     WSACleanup();
     logger_.Info("[IOCP]: Cleaned up Socket resources.");
