@@ -13,7 +13,7 @@
 
 #include <memory>
 
-namespace WFX::Core {
+namespace WFX::Http {
     // Factory function that returns the correct handler polymorphically
     inline std::unique_ptr<HttpConnectionHandler> CreateConnectionHandler()
     {

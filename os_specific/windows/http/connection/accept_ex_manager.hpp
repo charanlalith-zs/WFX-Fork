@@ -2,9 +2,13 @@
 #define WFX_WINDOWS_ACCEPT_EX_MANAGER_HPP
 
 #include "http/connection/http_connection.hpp"
+#include "http/limits/ip_connection_limiter/ip_connection_limiter.hpp"
+#include "utils/fixed_pool/fixed_pool.hpp"
 #include "utils/logger/logger.hpp"
 
+#include <ws2ipdef.h>
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <mswsock.h>
 #include <array>
 #include <mutex>
@@ -24,8 +28,8 @@ enum class PerIoOperationType {
 
 struct PerIoBase {
     OVERLAPPED         overlapped{};
-    PerIoOperationType operationType = PerIoOperationType::INVALID;
     WFXSocket          socket        = WFX_INVALID_SOCKET;
+    PerIoOperationType operationType = PerIoOperationType::INVALID;
 
     ~PerIoBase() = default;
 };
@@ -38,23 +42,30 @@ struct PerIoContext : PerIoBase {
     char buffer[2 * (sizeof(SOCKADDR_IN) + 16)];
 };
 
-// Just to be consistent with IoBase
-struct PostRecvOp : PerIoBase {};
-
-// Used as a tag only
-struct DeferredAcceptHandler : PerIoBase {
-    DeferredAcceptHandler() { operationType = PerIoOperationType::ACCEPT_DEFERRED; }
+/* Just to not be confused:
+ * PostRecvOp -> Take the meaning literally, this is for 're-arming' via PostReceive function. IMP: Just used as a tag
+ * PostAcceptOp -> For the operation performed after Accepting the connection (setting socket options and calling acceptCallback and stuff)
+ */
+struct PostRecvOp : PerIoBase {
+    PostRecvOp() { operationType = PerIoOperationType::ARM_RECV; }
 };
-static DeferredAcceptHandler DEFERRED_ACCEPT_HANDLER;
+static PostRecvOp ARM_RECV_OP;
 
-// Forward declare logger
-using namespace WFX::Utils;
+struct PostAcceptOp : PerIoBase, WFXAcceptedConnectionInfo {
+    char     ip[INET6_ADDRSTRLEN];
+    uint64_t ipType;
+
+    WFXSocket        GetSocket() const override { return socket; }
+    std::string_view GetIp()     const override { return ip; }
+    uint64_t         GetIpType() const override { return ipType; }
+};
+
+using namespace WFX::Utils; // For 'Logger'
+using namespace WFX::Http;  // For 'IpConnectionLimiter'
 
 class AcceptExManager {
 public:
-    constexpr static int MAX_SLOTS = 4096;
-
-    AcceptExManager() = default;
+    AcceptExManager(BufferPool& allocator);
 
     bool Initialize(WFXSocket listenSocket, HANDLE iocp);
     void DeInitialize();
@@ -62,23 +73,29 @@ public:
     void HandleSocketOptions(SOCKET);
 
 private:
-    // IMP
-    LPFN_ACCEPTEX             lpfnAcceptEx             = nullptr;
-    LPFN_GETACCEPTEXSOCKADDRS lpfnGetAcceptExSockaddrs = nullptr;
-
-    WFXSocket listenSocket_;
-    HANDLE    iocp_;
-    Logger&   logger_ = Logger::GetInstance();
-
-    std::array<PerIoContext, MAX_SLOTS> contexts_;
-    uint64_t                            activeSlotsBits_ = 0;
-
     inline void SetSlot(int index);
     inline void ClearSlot(int index);
     int         GetSlotFromPointer(PerIoContext* ctx);
     bool        AssociateWithIOCP(WFXSocket sock);
     void        RepostAcceptAtSlot(int slot);
     bool        PostAcceptAtSlot(int slot);
+
+public:
+    constexpr static int MAX_SLOTS = 4096;
+
+private:
+    // IMP
+    LPFN_ACCEPTEX             lpfnAcceptEx             = nullptr;
+    LPFN_GETACCEPTEXSOCKADDRS lpfnGetAcceptExSockaddrs = nullptr;
+
+    WFXSocket            listenSocket_;
+    HANDLE               iocp_;
+    BufferPool&          allocator_;
+    Logger&              logger_      = Logger::GetInstance();
+    IpConnectionLimiter& connLimiter_ = IpConnectionLimiter::GetInstance();
+
+    std::array<PerIoContext, MAX_SLOTS> contexts_;
+    uint64_t                            activeSlotsBits_ = 0;
 };
 
 } // namespace WFX::OSSpecific

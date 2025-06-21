@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace WFX {
+namespace WFX::Http {
 
 struct CaseInsensitiveHash {
     size_t operator()(const std::string& key) const;
@@ -34,4 +34,4 @@ private:
 
 } // namespace WFX
 
-#endif
+#endif // WFX_HTTP_HEADERS_HPP

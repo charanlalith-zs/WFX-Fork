@@ -83,6 +83,53 @@ void HashShard<K, V>::Resize(std::size_t newCapacity)
 }
 
 template <typename K, typename V>
+bool HashShard<K, V>::Emplace(const K& key, V&& value)
+{
+    if((static_cast<float>(size_.load(std::memory_order_relaxed)) / capacity_) >= KLOAD_FACTOR_GROW)
+        Resize();
+
+    std::size_t hash  = WFXHash(key);
+    std::size_t idx   = hash % capacity_;
+    std::size_t probe = 0;
+
+    Entry new_entry{
+        key,
+        std::move(value),
+        0,
+        true
+    };
+
+    while(probe < MAX_PROBE_LIMIT) {
+        std::size_t pos = (idx + probe) % capacity_;
+        Entry& entry    = entries_[pos];
+
+        _mm_prefetch(reinterpret_cast<const char*>(&entries_[(pos + 1) % capacity_]), _MM_HINT_T0);
+
+        if(!entry.occupied) {
+            new_entry.probe_length = static_cast<uint8_t>(probe);
+            entry = std::move(new_entry);
+            size_.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+
+        if(KeysEqual(entry.key, key)) {
+            entry.value = std::move(new_entry.value); // overwrite
+            return true;
+        }
+
+        if(entry.probe_length < probe) {
+            std::swap(entry, new_entry);
+            new_entry.probe_length = static_cast<uint8_t>(probe);
+            probe = entry.probe_length;
+        }
+
+        ++probe;
+    }
+
+    return false;
+}
+
+template <typename K, typename V>
 bool HashShard<K, V>::Insert(const K& key, const V& value)
 {
     if((static_cast<float>(size_.load(std::memory_order_relaxed)) / capacity_) >= KLOAD_FACTOR_GROW)
@@ -91,9 +138,9 @@ bool HashShard<K, V>::Insert(const K& key, const V& value)
     std::size_t hash  = WFXHash(key);
     std::size_t idx   = hash % capacity_;
     std::size_t probe = 0;
-    Entry new_entry{key, value, 0, true};
+    Entry new_entry{key, std::move(value), 0, true};
 
-    while(true) {
+    while(probe < MAX_PROBE_LIMIT) {
         std::size_t pos   = (idx + probe) % capacity_;
         Entry&      entry = entries_[pos];
 
@@ -119,31 +166,72 @@ bool HashShard<K, V>::Insert(const K& key, const V& value)
 
         ++probe;
     }
+
+    return false;
 }
 
 template <typename K, typename V>
-bool HashShard<K, V>::Get(const K& key, V& out_value) const
+V* HashShard<K, V>::Get(const K& key) const
 {
     std::size_t hash = WFXHash(key);
     std::size_t idx  = hash % capacity_;
 
     for(std::size_t i = 0; i < capacity_; ++i) {
-        std::size_t  pos   = (idx + i) % capacity_;
-        const Entry& entry = entries_[pos];
+        std::size_t pos   = (idx + i) % capacity_;
+        Entry&      entry = entries_[pos];
 
         if(!entry.occupied)
-            return false;
+            return nullptr;
 
-        if(KeysEqual(entry.key, key)) {
-            out_value = entry.value;
-            return true;
-        }
+        if(KeysEqual(entry.key, key))
+            return &entry.value;
 
         if(entry.probe_length < i)
-            return false;
+            return nullptr;
     }
 
-    return false;
+    return nullptr;
+}
+
+template <typename K, typename V>
+V* HashShard<K, V>::GetOrInsert(const K& inputKey, const V& defaultValue)
+{
+    if((static_cast<float>(size_.load(std::memory_order_relaxed)) / capacity_) >= KLOAD_FACTOR_GROW)
+        Resize();
+
+    Entry new_entry{inputKey, std::move(defaultValue), 0, true};
+
+    std::size_t hash = WFXHash(inputKey);
+    std::size_t idx  = hash % capacity_;
+    std::size_t probe = 0;
+
+    while(probe < MAX_PROBE_LIMIT) {
+        std::size_t pos = (idx + probe) % capacity_;
+        Entry& entry    = entries_[pos];
+
+        _mm_prefetch(reinterpret_cast<const char*>(&entries_[(pos + 1) % capacity_]), _MM_HINT_T0);
+
+        if(!entry.occupied) {
+            new_entry.probe_length = static_cast<uint8_t>(probe);
+            entry = std::move(new_entry);
+            
+            size_.fetch_add(1, std::memory_order_relaxed);
+            return &entry.value;
+        }
+
+        if(KeysEqual(entry.key, new_entry.key))
+            return &entry.value;
+
+        if(entry.probe_length < probe) {
+            std::swap(entry, new_entry);
+            new_entry.probe_length = static_cast<uint8_t>(probe);
+            probe = entry.probe_length;
+        }
+
+        ++probe;
+    }
+
+    return nullptr;
 }
 
 template <typename K, typename V>
@@ -175,6 +263,9 @@ bool HashShard<K, V>::Erase(const K& key)
                 next = (j + 1) % capacity_;
             }
 
+            // Explicitly destroy final slot's value and key
+            entries_[j].value    = V{};
+            entries_[j].key      = K{};
             entries_[j].occupied = false;
 
             float currentLoad = static_cast<float>(prev_size - 1) / capacity_;

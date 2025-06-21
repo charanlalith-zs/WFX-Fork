@@ -4,9 +4,11 @@
 #include "accept_ex_manager.hpp"
 #include "third_party/concurrent_queue/blockingconcurrentqueue.h"
 #include "http/connection/http_connection.hpp"
+#include "utils/functional/move_only_function.hpp"
 #include "utils/fixed_pool/fixed_pool.hpp"
 #include "utils/hash_map/concurrent_hash_map.hpp"
 #include "utils/logger/logger.hpp"
+#include "utils/perf_timer/perf_timer.hpp" // For debugging
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -29,14 +31,14 @@ namespace WFX::OSSpecific {
 using namespace WFX::Utils; // For 'Logger', 'BufferPool' and 'ConcurrentHashMap'
 using namespace moodycamel; // For BlockingConcurrentQueue
 
-class IocpConnectionHandler : public WFX::Core::HttpConnectionHandler {
+class IocpConnectionHandler : public WFX::Http::HttpConnectionHandler {
 public:
     IocpConnectionHandler();
     ~IocpConnectionHandler();
 
     bool Initialize(const std::string& host, int port) override;
-    void ResumeRecieve(WFXSocket) override;
-    void Receive(WFXSocket, ReceiveCallback onData) override;
+    void SetReceiveCallback(WFXSocket socket, ReceiveCallback onData) override;
+    void ResumeReceive(WFXSocket socket) override;
     int  Write(WFXSocket socket, const char* buffer, size_t length) override;
     void Close(WFXSocket socket) override;
 
@@ -47,28 +49,39 @@ public:
 private:
     bool CreateWorkerThreads(unsigned int iocpThreads, unsigned int offloadThreads);
     void WorkerLoop();
-    void SafeDeleteIoData(PerIoData* data);
+    void SafeDeleteIoData(PerIoData* data, bool shouldCleanBuffer = true);
     void PostReceive(WFXSocket socket);
     void InternalCleanup();
 
-private:
-    // Helper structs used in unique_ptr deleter
+private: // Helper structs / functions used in unique_ptr deleter
     struct PerIoDataDeleter {
         IocpConnectionHandler* handler;
+        bool shouldCleanBuffer = true;
         
         void operator()(PerIoData* data) const {
-            handler->SafeDeleteIoData(data);
+            handler->SafeDeleteIoData(data, shouldCleanBuffer);
         }
     };
 
-    struct PostRecvOpDeleter {
+    struct ConnectionContextDeleter {
         IocpConnectionHandler* handler;
 
-        void operator()(PostRecvOp* data) const {
-            handler->allocPool_.Free(data, sizeof(PostRecvOp));
+        void operator()(ConnectionContext* ctx) {
+            if(ctx->buffer) {
+                handler->bufferPool_.Release(ctx->buffer);
+                ctx->buffer = nullptr;
+                ctx->bufferSize = 0;
+                ctx->dataLength = 0;
+            }
+            
+            // Delete the context itself
+            delete ctx;
         }
     };
-    
+
+    // Just for ease
+    using ConnectionContextPtr = std::unique_ptr<ConnectionContext, ConnectionContextDeleter>;
+
 private:
     SOCKET                     listenSocket_ = INVALID_SOCKET;
     HANDLE                     iocp_         = nullptr;
@@ -79,12 +92,13 @@ private:
     AcceptedConnectionCallback acceptCallback_;
 
     Logger& logger_ = Logger::GetInstance();
-    ConfigurableFixedAllocPool allocPool_{{64, 128, 4096}};
-    ConcurrentHashMap<SOCKET, ReceiveCallback> receiveCallbacks_{1024 * 1024};
+    BufferPool bufferPool_{1024 * 1024, [](std::size_t curSize){ return curSize * 2; }}; // For variable size allocs
+    ConfigurableFixedAllocPool allocPool_{{32, 64, 128}};                                // For fixed size small allocs
     BlockingConcurrentQueue<std::function<void(void)>> offloadCallbacks_;
+    ConcurrentHashMap<SOCKET, ConnectionContextPtr> connections_{ 1024 * 1024 };
 
     // Main shit
-    AcceptExManager acceptManager_;
+    AcceptExManager acceptManager_{bufferPool_};
 };
 
 } // namespace WFX::OSSpecific

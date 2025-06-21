@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 
-namespace WFX {
+namespace WFX::Http {
 
 // === Secure Case-Insensitive Hashing (FNV-1a 64-bit) === //
 size_t CaseInsensitiveHash::operator()(const std::string& key) const {

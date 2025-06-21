@@ -47,9 +47,12 @@ public:
     ~HashShard();
 
     void Init(std::size_t cap);
+    
+    bool Emplace(const K& key, V&& value);
     bool Insert(const K& key, const V& value);
-    bool Get(const K& key, V& out_value) const;
+    V*   Get(const K& key) const;
     bool Erase(const K& key);
+    V*   GetOrInsert(const K& key, const V& defaultValue = V{});
 
     std::unique_lock<std::shared_mutex> UniqueLock() const;
     std::shared_lock<std::shared_mutex> SharedLock() const;

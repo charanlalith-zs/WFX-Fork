@@ -1,4 +1,5 @@
-#include "Engine.hpp"
+#include "engine.hpp"
+
 #include <iostream>
 #include <string>
 #include <thread>
@@ -16,8 +17,8 @@ void Engine::Listen(const std::string& host, int port)
 
     logger_.Info("[Engine]: Listening on ", host, ':', port);
 
-    connHandler_->Run([this](WFXSocket socket) {
-        this->HandleConnection(socket);
+    connHandler_->Run([this](WFXSocket data) {
+        this->HandleConnection(std::move(data));
     });
 }
 
@@ -30,12 +31,15 @@ void Engine::Stop()
 
 void Engine::HandleConnection(WFXSocket socket)
 {
-    connHandler_->Receive(socket, [this, socket](ReceiveCallbackData data, size_t len) {
-        this->HandleRequest(socket, std::move(data), len);
+    connHandler_->SetReceiveCallback(socket, [this, socket](ConnectionContext& ctx) {
+        logger_.Info("Connected IP Address: ", ctx.acceptInfo->GetIp(),
+            " of type: ", ctx.acceptInfo->GetIpType() == AF_INET ? "IPv4" : "IPv6");
+
+        this->HandleRequest(socket, ctx);
     });
 }
 
-void Engine::HandleRequest(WFXSocket socket, ReceiveCallbackData data, size_t length)
+void Engine::HandleRequest(WFXSocket socket, ConnectionContext& ctx)
 {
     // Hardcode the request for now, later we do the do
     std::string httpResp =
@@ -46,7 +50,6 @@ void Engine::HandleRequest(WFXSocket socket, ReceiveCallbackData data, size_t le
         "Hello from WFX";
 
     connHandler_->Write(socket, httpResp.c_str(), httpResp.size());
-    connHandler_->Close(socket);
 }
 
 } // namespace WFX

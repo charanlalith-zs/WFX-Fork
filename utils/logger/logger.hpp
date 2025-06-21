@@ -62,6 +62,8 @@ private:
 
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
+    Logger(Logger&&) = delete;
+    Logger& operator=(Logger&&) = delete;
 
     const char* LevelToString(Level level) const;
     std::string CurrentTimestamp() const;

@@ -9,7 +9,7 @@
 #include "http/headers/http_headers.hpp"
 #include "http/constants/http_constants.hpp"
 
-namespace WFX {
+namespace WFX::Http {
 
 struct HttpRequest {
     HttpMethod  method;

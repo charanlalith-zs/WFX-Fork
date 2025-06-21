@@ -1,7 +1,7 @@
-#ifndef WFX_HTTP_METHODS_HPP
-#define WFX_HTTP_METHODS_HPP
+#ifndef WFX_HTTP_CONSTANTS_HPP
+#define WFX_HTTP_CONSTANTS_HPP
 
-namespace WFX {
+namespace WFX::Http {
 
 // We will keep it quite simple, only GET and POST support for now
 enum class HttpMethod {
@@ -92,6 +92,6 @@ enum class HttpVersion {
     UNKNOWN
 };
 
-} // namespace WFX
+} // namespace WFX::Http
 
-#endif
+#endif // WFX_HTTP_CONSTANTS_HPP

@@ -1,8 +1,10 @@
 #include "accept_ex_manager.hpp"
 
-#include "utils/perf_timer/perf_timer.hpp"
-
 namespace WFX::OSSpecific {
+
+AcceptExManager::AcceptExManager(BufferPool& allocator)
+    : allocator_(allocator)
+{}
 
 bool AcceptExManager::Initialize(WFXSocket listenSocket, HANDLE iocp)
 {
@@ -45,7 +47,7 @@ bool AcceptExManager::Initialize(WFXSocket listenSocket, HANDLE iocp)
         return logger_.Error("[AcceptExManager]: Failed to load GetAcceptExSockaddrs"), false;
 
     // Zero out all the data for use
-    memset(contexts_.data(), 0, sizeof(contexts_));
+    for(auto& c : contexts_) c = {};
 
     for(int i = 0; i < MAX_SLOTS; ++i) {
         if(!PostAcceptAtSlot(i)) {
@@ -109,20 +111,62 @@ void AcceptExManager::HandleAcceptCompletion(PerIoContext* ctx)
         &remoteSockaddrLen
     );
 
+    // Stores IP info
+    PostAcceptOp* acceptOp = nullptr;
+
+    // Placement new for vtable
+    if(void* mem = allocator_.Lease(sizeof(PostAcceptOp)); mem)
+        acceptOp = new (mem) PostAcceptOp();
+    else {
+        logger_.Error("[AcceptExManager]: Failed to allocate PostAcceptOp for accepted socket");
+        closesocket(client);
+        RepostAcceptAtSlot(slot);
+        return;
+    }
+    acceptOp->socket = client;
+    acceptOp->operationType = PerIoOperationType::ACCEPT_DEFERRED;
+
+    switch(remoteSockaddr->sa_family) {
+        case AF_INET:
+        {
+            sockaddr_in* ipv4 = reinterpret_cast<sockaddr_in*>(remoteSockaddr);
+            inet_ntop(AF_INET, &ipv4->sin_addr, acceptOp->ip, sizeof(acceptOp->ip));
+            acceptOp->ipType = AF_INET;
+            break;
+        }
+        case AF_INET6:
+        {
+            sockaddr_in6* ipv6 = reinterpret_cast<sockaddr_in6*>(remoteSockaddr);
+            inet_ntop(AF_INET6, &ipv6->sin6_addr, acceptOp->ip, sizeof(acceptOp->ip));
+            acceptOp->ipType = AF_INET6;
+            break;
+        }
+        default:
+        {
+            acceptOp->ip[0] = '\0';
+            acceptOp->ipType = 0;
+            break;
+        }
+    }
+
     setsockopt(client, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&listenSocket_, sizeof(listenSocket_));
 
     if(!AssociateWithIOCP(client)) {
         logger_.Error("[AcceptExManager]: Failed to associate accepted socket with IOCP");
+        allocator_.Release(acceptOp);
+        shutdown(client, SD_BOTH);
         closesocket(client);
         RepostAcceptAtSlot(slot);
         return;
     }
 
     RepostAcceptAtSlot(slot);
- 
+
     // Safe now to update context and options
-    if(!PostQueuedCompletionStatus(iocp_, 0, (ULONG_PTR)client, &DEFERRED_ACCEPT_HANDLER.overlapped)) {
+    if(!PostQueuedCompletionStatus(iocp_, 0, 0, &(acceptOp->overlapped))) {
         logger_.Error("[AcceptExManager]: Failed to queue deferred accept for socket ", client);
+        allocator_.Release(acceptOp);
+        shutdown(client, SD_BOTH);
         closesocket(client);
     }
 }
@@ -190,7 +234,7 @@ bool AcceptExManager::PostAcceptAtSlot(int slot)
 
     ctx.socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED);
     if(ctx.socket == WFX_INVALID_SOCKET) {
-        logger_.Error("AcceptExManager: WSASocket failed at slot ", slot, ", err=", WSAGetLastError());
+        logger_.Error("[AcceptExManager]: WSASocket failed at slot ", slot, ", err=", WSAGetLastError());
         return false;
     }
 
@@ -209,7 +253,7 @@ bool AcceptExManager::PostAcceptAtSlot(int slot)
     );
 
     if(!result && WSAGetLastError() != ERROR_IO_PENDING) {
-        logger_.Error("AcceptExManager: AcceptEx failed at slot ", slot, ", err=", WSAGetLastError());
+        logger_.Error("[AcceptExManager]: AcceptEx failed at slot ", slot, ", err=", WSAGetLastError());
         closesocket(ctx.socket);
         ctx.socket = WFX_INVALID_SOCKET;
         return false;

@@ -1,9 +1,11 @@
 #ifndef WFX_HTTP_CONNECTION_HANDLER_HPP
 #define WFX_HTTP_CONNECTION_HANDLER_HPP
 
+#include "utils/functional/move_only_function.hpp"
+
 #include <string>
-#include <functional>
 #include <memory>
+#include <functional>
 
 #ifdef _WIN32
     #include <WinSock2.h>
@@ -15,15 +17,44 @@
     constexpr WFXSocket WFX_INVALID_SOCKET = -1;
 #endif
 
-// Recieve callback signature around the code
-using ReceiveCallbackData = std::unique_ptr<char[], std::function<void(char*)>>;
-using ReceiveCallback     = std::function<void(ReceiveCallbackData, size_t)>;
+// For 'MoveOnlyFunction'
+using WFX::Utils::MoveOnlyFunction;
 
-// When connection is accepted, upper layers will recieve the connection WFXSocket
+// When connection is accepted, upper layers will recieve the connection data (Socket and IP)
 // For that, we need a callback
-using AcceptedConnectionCallback = std::function<void(WFXSocket)>;
+// And for the callback, we need the data :)
+struct WFXAcceptedConnectionInfo {
+    virtual ~WFXAcceptedConnectionInfo() = default;
+    virtual WFXSocket        GetSocket() const = 0;
+    virtual std::string_view GetIp()     const = 0;
+    virtual uint64_t         GetIpType() const = 0;
+};
 
-namespace WFX::Core {
+// Forward declare it so compilers won't cry
+struct ConnectionContext;
+
+using ReceiveCallback = MoveOnlyFunction<void(ConnectionContext&)>;
+
+using AcceptedConnectionDeleter      = MoveOnlyFunction<void(WFXAcceptedConnectionInfo*)>;
+using AcceptedConnectionCallbackData = std::unique_ptr<WFXAcceptedConnectionInfo, AcceptedConnectionDeleter>;
+using AcceptedConnectionCallback     = MoveOnlyFunction<void(WFXSocket)>;
+
+// Quite important
+struct ConnectionContext {
+    WFXSocket socket;
+    
+    char*  buffer        = nullptr;
+    size_t bufferSize    = 0;
+    size_t dataLength    = 0;
+    size_t maxBufferSize = 16 * 1024; // 16KB. Can be set by the user as well
+    
+    ReceiveCallback onReceive;
+
+    // Accepted connection info (moved in on accept)
+    AcceptedConnectionCallbackData acceptInfo;
+};
+
+namespace WFX::Http {
 
 // Abstraction for Windows and Linux impl
 class HttpConnectionHandler {
@@ -33,11 +64,11 @@ public:
     // Initialize sockets, bind and listen on given host:port
     virtual bool Initialize(const std::string& host, int port) = 0;
 
-    // Accept a new connection and return a socket descriptor or handle
-    virtual void ResumeRecieve(WFXSocket) = 0;
+    // Set the receive callback ONCE per socket (can be overwritten if needed)
+    virtual void SetReceiveCallback(WFXSocket socket, ReceiveCallback onData) = 0;
 
-    // Read data from socket (Async)
-    virtual void Receive(WFXSocket, ReceiveCallback onData) = 0;
+    // Read more data if required (Async)
+    virtual void ResumeReceive(WFXSocket socket) = 0;
 
     // Write data to socket (Async)
     virtual int Write(WFXSocket socket, const char* buffer, size_t length) = 0;
@@ -52,6 +83,6 @@ public:
     virtual void Stop() = 0;
 };
 
-} // namespace WFX::Connection
+} // namespace WFX::Http
 
 #endif // WFX_HTTP_CONNECTION_HANDLER_HPP

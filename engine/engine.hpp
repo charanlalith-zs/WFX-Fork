@@ -7,8 +7,8 @@
 
 namespace WFX::Core {
 
-// For 'Logger'
-using namespace WFX::Utils;
+using namespace WFX::Utils; // For 'Logger'
+using namespace WFX::Http;  // For 'HttpConnectionHandler'
 
 class Engine {
 public:
@@ -17,8 +17,8 @@ public:
     void Stop();
 
 private:
-    void HandleConnection(WFXSocket socket);
-    void HandleRequest(WFXSocket socket, ReceiveCallbackData data, size_t length);
+    void HandleConnection(WFXSocket client);
+    void HandleRequest(WFXSocket socket, ConnectionContext& ctx);
 
     Logger& logger_ = Logger::GetInstance();
 

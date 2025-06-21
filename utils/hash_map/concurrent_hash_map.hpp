@@ -22,6 +22,13 @@ public:
         }
     }
 
+    bool Emplace(const K& key, V&& value)
+    {
+        auto& shard = GetShard(key);
+        auto lock = shard.UniqueLock();
+        return shard.Emplace(key, std::move(value));
+    }
+
     bool Insert(const K& key, const V& value)
     {
         auto& shard = GetShard(key);
@@ -29,18 +36,59 @@ public:
         return shard.Insert(key, value);
     }
 
-    bool Get(const K& key, V& out_value) const
+    V* Get(const K& key)
     {
         const auto& shard = GetShard(key);
         auto lock = shard.SharedLock();
-        return shard.Get(key, out_value);
+        return shard.Get(key);
     }
 
+    // Overload to support value copying
+    bool Get(const K& key, V& outValue) const
+    {
+        const auto& shard = GetShard(key);
+        auto lock = shard.SharedLock();
+
+        if(const V* ptr = shard.Get(key)) {
+            outValue = *ptr;
+            return true;
+        }
+
+        return false;
+    }
+
+    bool Update(const K& key, const V& value)
+    {
+        auto& shard = GetShard(key);
+        auto lock = shard.UniqueLock();
+
+        if(V* ptr = shard.Get(key)) {
+            *ptr = value;
+            return true;
+        }
+
+        return false;
+    }
+    
     bool Erase(const K& key)
     {
         auto& shard = GetShard(key);
         auto lock = shard.UniqueLock();
         return shard.Erase(key);
+    }
+
+    // Functions with mixed functionality
+    template<typename Fn>
+    bool GetOrInsertWith(const K& key, Fn&& fn, const V& defaultValue = V{})
+    {
+        auto& shard = GetShard(key);
+        auto lock = shard.UniqueLock();
+        
+        V* val = shard.GetOrInsert(key, defaultValue);
+        if(val)
+            return fn(*val);
+        
+        return false;
     }
 
 private:

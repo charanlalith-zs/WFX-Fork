@@ -1,5 +1,4 @@
 #include "iocp_connection.hpp"
-#include "utils/perf_timer/perf_timer.hpp"
 
 #undef max
 #undef min
@@ -15,7 +14,7 @@ IocpConnectionHandler::IocpConnectionHandler()
     if(LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2)
         logger_.Fatal("Incorrect Winsock version");
 
-    allocPool_.PreWarmAll(32);
+    allocPool_.PreWarmAll(8);
 }
 
 IocpConnectionHandler::~IocpConnectionHandler()
@@ -31,16 +30,27 @@ bool IocpConnectionHandler::Initialize(const std::string& host, int port)
         return logger_.Error("[IOCP]: WSASocket failed"), false;
 
     sockaddr_in addr = {};
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = inet_addr(host.c_str());
-    addr.sin_port        = htons(port);
+    addr.sin_family = AF_INET;
+    addr.sin_port   = htons(port);
 
+    // Handle special cases: "localhost" and "0.0.0.0"
+    if(host == "localhost")
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // 127.0.0.1
+
+    else if(host == "0.0.0.0")
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);       // Bind all interfaces
+
+    else if(inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1)
+        return logger_.Error("[IOCP]: Failed to parse host IP: ", host), false;
+
+    // Bind and Listen on the host:port combo provided
     if(bind(listenSocket_, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR)
         return logger_.Error("[IOCP]: bind failed"), false;
 
     if(listen(listenSocket_, SOMAXCONN) == SOCKET_ERROR)
         return logger_.Error("[IOCP]: listen failed"), false;
 
+    // We using IOCP for async connection handling
     iocp_ = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
     if(!iocp_)
         return logger_.Error("[IOCP]: CreateIoCompletionPort failed"), false;
@@ -51,46 +61,47 @@ bool IocpConnectionHandler::Initialize(const std::string& host, int port)
     return true;
 }
 
-void IocpConnectionHandler::ResumeRecieve(WFXSocket socket)
+void IocpConnectionHandler::SetReceiveCallback(WFXSocket socket, ReceiveCallback callback)
+{
+    if(!callback) {
+        logger_.Error("[IOCP]: Invalid callback in 'SetReceiveCallback'");
+        return;
+    }
+
+    auto* ctx = connections_.Get(socket);
+    if(!ctx || !(*ctx))
+        logger_.Fatal("[IOCP]: No ConnectionContext found for socket: ", socket);
+
+    // Store the callback for this connection
+    (*ctx)->onReceive = std::move(callback);
+    
+    // Hand off PostReceive to IOCP thread. sizeof(PostRecvOp) rounded to 64 bytes
+    if(!PostQueuedCompletionStatus(iocp_, 0, static_cast<ULONG_PTR>(socket), &(ARM_RECV_OP.overlapped))) {
+        logger_.Error("[IOCP]: Failed to queue PostReceive for socket: ", socket);
+        Close(socket);
+    }
+}
+
+void IocpConnectionHandler::ResumeReceive(WFXSocket socket)
 {
     // Simply 're-arm' WSARecv
     PostReceive(socket);
 }
 
-void IocpConnectionHandler::Receive(WFXSocket socket, ReceiveCallback callback)
-{
-    if(!callback) {
-        logger_.Error("[IOCP]: Invalid callback in 'Recieve'");
-        return;
-    }
-    
-    WFX_PROFILE_BLOCK_START(Recieve_)
-    if(!receiveCallbacks_.Insert(socket, std::move(callback)))
-        logger_.Fatal("[IOCP]: Failed to insert Receive Callback");
-
-    // Hand off PostReceive to IOCP thread. sizeof(PostRecvOp) rounded to 64 bytes
-    PostRecvOp* op = static_cast<PostRecvOp*>(allocPool_.Allocate(sizeof(PostRecvOp)));
-    
-    op->operationType = PerIoOperationType::ARM_RECV;
-    op->socket        = socket;
-    
-    if(!PostQueuedCompletionStatus(iocp_, 0, 0, &op->overlapped)) {
-        logger_.Error("[IOCP]: Failed to queue PostReceive");
-        allocPool_.Free(op, sizeof(PostRecvOp));
-        Close(socket);
-    }
-    WFX_PROFILE_BLOCK_END(Recieve_)
-}
-
 int IocpConnectionHandler::Write(WFXSocket socket, const char* buffer, size_t length)
 {
-    void* outBuffer = allocPool_.Allocate(length);
+    void* outBuffer = bufferPool_.Lease(length);
     if(!outBuffer)
         return -1;
 
     std::memcpy(outBuffer, buffer, length);
 
+    // Because its fixed size alloc, we use alloc pool for efficiency
     PerIoData* ioData = static_cast<PerIoData*>(allocPool_.Allocate(sizeof(PerIoData)));
+    if(!ioData) {
+        bufferPool_.Release(outBuffer);
+        return -1;
+    }
 
     ioData->overlapped    = { 0 };
     ioData->operationType = PerIoOperationType::SEND;
@@ -113,7 +124,7 @@ void IocpConnectionHandler::Close(WFXSocket socket)
     shutdown(socket, SD_BOTH);
     closesocket(socket);
 
-    if(!receiveCallbacks_.Erase(socket))
+    if(!connections_.Erase(socket))
         logger_.Warn("[IOCP]: Failed to erase Receive Callback for socket: ", socket);
 }
 
@@ -150,37 +161,83 @@ void IocpConnectionHandler::Stop()
 
 void IocpConnectionHandler::PostReceive(WFXSocket socket)
 {
-    WFX_PROFILE_BLOCK_START(PostReceive_Lease);
+    WFX_PROFILE_BLOCK_START(PostReceive_Lookup);
 
-    void* buf = allocPool_.Allocate(4096);
-    if(!buf) {
+    auto* ctxPtr = connections_.Get(socket);
+    if(!ctxPtr || !(*ctxPtr)) {
+        logger_.Error("[IOCP]: PostReceive failed — no ConnectionContext for socket: ", socket);
         Close(socket);
         return;
     }
 
-    // Ensure pages are touched — avoids kernel-to-user page fault stalls
-    ((volatile char*)buf)[0] = 0;
+    ConnectionContext& ctx = *(*ctxPtr);
+
+    WFX_PROFILE_BLOCK_END(PostReceive_Lookup);
+    WFX_PROFILE_BLOCK_START(PostReceive_Lease);
+
+    // Lazy-allocate receive buffer
+    if(!ctx.buffer) {
+        constexpr std::size_t defaultSize = 4096;
+
+        ctx.buffer = static_cast<char*>(bufferPool_.Lease(defaultSize));
+        if(!ctx.buffer) {
+            logger_.Error("[IOCP]: Failed to allocate receive buffer for socket: ", socket);
+            Close(socket);
+            return;
+        }
+
+        ((volatile char*)ctx.buffer)[0] = 0;  // page fault avoidance
+        ctx.bufferSize = defaultSize;
+        ctx.dataLength = 0;
+    }
+
+    // Do not continue if buffer overflows would happen
+    if(ctx.dataLength >= ctx.bufferSize || ctx.dataLength >= ctx.maxBufferSize) {
+        logger_.Error("[IOCP]: Max buffer size exceeded for socket: ", socket,
+                      ", bufferSize=", ctx.bufferSize, ", dataLength=", ctx.dataLength,
+                      ", maxBufferSize=", ctx.maxBufferSize);
+        Close(socket);
+        return;
+    }
+
+    // Compute safe length that won't exceed buffer or policy
+    const size_t remainingBufferSize = ctx.bufferSize - ctx.dataLength;
+    const size_t remainingPolicySize = ctx.maxBufferSize - ctx.dataLength;
+    const size_t safeRecvLen         = std::min(remainingBufferSize, remainingPolicySize);
+
+    if(safeRecvLen == 0) {
+        logger_.Error("[IOCP]: No room left to receive data for socket: ", socket);
+        Close(socket);
+        return;
+    }
 
     WFX_PROFILE_BLOCK_END(PostReceive_Lease);
-
     WFX_PROFILE_BLOCK_START(PostReceive_New);
 
+    // Allocate IO context
     PerIoData* ioData = static_cast<PerIoData*>(allocPool_.Allocate(sizeof(PerIoData)));
-    ioData->overlapped    = { 0 };
+    if(!ioData) {
+        logger_.Error("[IOCP]: Failed to allocate PerIoData");
+        Close(socket);
+        return;
+    }
+
+    ioData->overlapped    = {};
     ioData->operationType = PerIoOperationType::RECV;
     ioData->socket        = socket;
-    ioData->wsaBuf.buf    = static_cast<char*>(buf);
-    ioData->wsaBuf.len    = 4096;
-
-    WFX_PROFILE_BLOCK_END(PostReceive_New);
+    ioData->wsaBuf.buf    = ctx.buffer + ctx.dataLength;
+    ioData->wsaBuf.len    = static_cast<ULONG>(safeRecvLen);  // Always safe now
 
     DWORD flags = 0, bytesRecv = 0;
     int ret = WSARecv(socket, &ioData->wsaBuf, 1, &bytesRecv, &flags, &ioData->overlapped, nullptr);
     if(ret == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING) {
-        logger_.Warn("[IOCP]: WSARecv immediate failure: ", WSAGetLastError());
+        logger_.Error("[IOCP]: WSARecv immediate failure: ", WSAGetLastError());
         SafeDeleteIoData(ioData);
         Close(socket);
+        return;
     }
+
+    WFX_PROFILE_BLOCK_END(PostReceive_New);
 }
 
 void IocpConnectionHandler::WorkerLoop()
@@ -203,44 +260,47 @@ void IocpConnectionHandler::WorkerLoop()
         switch(opType) {
             case PerIoOperationType::ARM_RECV:
             {
-                std::unique_ptr<PostRecvOp, PostRecvOpDeleter> op(static_cast<PostRecvOp*>(base), PostRecvOpDeleter{this});
-                PostReceive(op->socket);
+                PostReceive(static_cast<SOCKET>(key));
                 break;
             }
 
             case PerIoOperationType::RECV:
             {
                 WFX_PROFILE_BLOCK_START(RECV_Handle);
-                std::unique_ptr<PerIoData, PerIoDataDeleter> ioData(static_cast<PerIoData*>(base), PerIoDataDeleter{this});
+
+                // We do not need buffer to be released as ioData does not own the buffer, ConnectionContext does
+                // Hence the 'false' in the PerIoDataDeleter
+                std::unique_ptr<PerIoData, PerIoDataDeleter> ioData(static_cast<PerIoData*>(base), PerIoDataDeleter{this, false});
                 SOCKET clientSocket = ioData->socket;
 
-                // FILTER ZERO-LENGTH (clean disconnect)
                 if(bytesTransferred <= 0) {
                     Close(clientSocket);
                     break;
                 }
 
-                ReceiveCallback callback;
-                if(!receiveCallbacks_.Get(clientSocket, callback))
-                    logger_.Fatal("[IOCP]: Failed to get Receive Callback");
-                
-                // Take ownership of buffer before we free ioData
-                char*  rawBuf = ioData->wsaBuf.buf;
-                size_t rawLen = ioData->wsaBuf.len;
+                auto* ctxPtr = connections_.Get(clientSocket);
+                if(!ctxPtr || !(*ctxPtr)) {
+                    logger_.Error("[IOCP]: No ConnectionContext found for RECV socket: ", clientSocket);
+                    Close(clientSocket);
+                    break;
+                }
 
-                ioData->wsaBuf.buf = nullptr;
-                ioData->wsaBuf.len = 0;
+                ConnectionContext& ctx = *(*ctxPtr);
 
-                // Enqueue callback to offload thread
-                offloadCallbacks_.enqueue([this, rawBuf, rawLen, cb = std::move(callback)]() mutable {
+                // Just in case
+                if(!ctx.onReceive) {
+                    logger_.Error("[IOCP]: No receive callback set for socket: ", clientSocket);
+                    Close(clientSocket);
+                    break;
+                }
+
+                // Update buffer state
+                ctx.dataLength += bytesTransferred;
+
+                // Just call the callback from within the offload thread without moving it
+                offloadCallbacks_.enqueue([&ctx]() mutable {
                     WFX_PROFILE_BLOCK_START(Offloaded_CB);
-                    // Move buffer into callback with a custom deleter
-                    std::unique_ptr<char[], std::function<void(char*)>> movedBuf(
-                        rawBuf,
-                        [this, rawLen](char* p) { this->allocPool_.Free(p, rawLen); }
-                    );
-
-                    cb(std::move(movedBuf), rawLen);
+                    ctx.onReceive(ctx);
                     WFX_PROFILE_BLOCK_END(Offloaded_CB);
                 });
 
@@ -250,7 +310,9 @@ void IocpConnectionHandler::WorkerLoop()
 
             case PerIoOperationType::SEND:
             {
-                std::unique_ptr<PerIoData, PerIoDataDeleter> ioData(static_cast<PerIoData*>(base), PerIoDataDeleter{this});
+                std::unique_ptr<PerIoData, PerIoDataDeleter> ioData(
+                    static_cast<PerIoData*>(base), PerIoDataDeleter{this}
+                );
                 break; // just cleanup, no callback
             }
 
@@ -265,15 +327,37 @@ void IocpConnectionHandler::WorkerLoop()
             case PerIoOperationType::ACCEPT_DEFERRED:
             {
                 WFX_PROFILE_BLOCK_START(ACCEPT_Deferred);
-                SOCKET client = static_cast<SOCKET>(key);
+
+                SOCKET client = base->socket;
                 acceptManager_.HandleSocketOptions(client);
-                
-                offloadCallbacks_.enqueue([this, client]() {
+
+                // Take ownership of PostAcceptOp directly
+                AcceptedConnectionCallbackData acceptOp(
+                    static_cast<PostAcceptOp*>(base),
+                    [this](WFXAcceptedConnectionInfo* ptr) mutable {
+                        if(!ptr) return;
+
+                        bufferPool_.Release(ptr);
+                    }
+                );
+
+                // Create the ConnectionContext needed for this connection to be kept alive
+                // We will lazy allocate buffer because we don't know if we need it later or not
+                ConnectionContextPtr connectionContext(
+                    new ConnectionContext(), ConnectionContextDeleter{this}
+                );
+                connectionContext->socket     = client;
+                connectionContext->acceptInfo = std::move(acceptOp);
+
+                if(!connections_.Emplace(client, std::move(connectionContext)))
+                    logger_.Fatal("[IOCP]: Failed to create ConnectionContext for socket: ", client);
+
+                // Offload callbacks, save time :)
+                offloadCallbacks_.enqueue([this, client]() mutable {
                     acceptCallback_(client);
                 });
 
                 WFX_PROFILE_BLOCK_END(ACCEPT_Deferred);
-                
                 break;
             }
 
@@ -303,10 +387,15 @@ bool IocpConnectionHandler::CreateWorkerThreads(unsigned int iocpThreads, unsign
     return true;
 }
 
-void IocpConnectionHandler::SafeDeleteIoData(PerIoData* data)
+void IocpConnectionHandler::SafeDeleteIoData(PerIoData* data, bool shouldCleanBuffer)
 {
     if(!data) return;
-    if(data->wsaBuf.buf) allocPool_.Free(data->wsaBuf.buf, data->wsaBuf.len);
+    // Buffer is variable, so we used buffer pool.
+    if(data->wsaBuf.buf && shouldCleanBuffer) {
+        bufferPool_.Release(data->wsaBuf.buf);
+        data->wsaBuf.buf = nullptr;
+    }
+    // PerIoData is fixed, so we used alloc pool
     allocPool_.Free(data, sizeof(PerIoData));
 }
 
