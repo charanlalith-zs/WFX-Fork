@@ -69,8 +69,11 @@ void IocpConnectionHandler::SetReceiveCallback(WFXSocket socket, ReceiveCallback
     }
 
     auto* ctx = connections_.Get(socket);
-    if(!ctx || !(*ctx))
-        logger_.Fatal("[IOCP]: No ConnectionContext found for socket: ", socket);
+    if(!ctx || !(*ctx)) {
+        logger_.Error("[IOCP]: No Connection Context found for socket: ", socket);
+        Close(socket);
+        return;
+    }
 
     // Store the callback for this connection
     (*ctx)->onReceive = std::move(callback);
@@ -125,7 +128,7 @@ void IocpConnectionHandler::Close(WFXSocket socket)
     closesocket(socket);
 
     if(!connections_.Erase(socket))
-        logger_.Warn("[IOCP]: Failed to erase Receive Callback for socket: ", socket);
+        logger_.Warn("[IOCP]: Failed to erase Connection Context for socket: ", socket);
 }
 
 void IocpConnectionHandler::Run(AcceptedConnectionCallback onAccepted)
@@ -165,7 +168,7 @@ void IocpConnectionHandler::PostReceive(WFXSocket socket)
 
     auto* ctxPtr = connections_.Get(socket);
     if(!ctxPtr || !(*ctxPtr)) {
-        logger_.Error("[IOCP]: PostReceive failed — no ConnectionContext for socket: ", socket);
+        logger_.Error("[IOCP]: PostReceive failed - no Connection Context for socket: ", socket);
         Close(socket);
         return;
     }
@@ -176,9 +179,9 @@ void IocpConnectionHandler::PostReceive(WFXSocket socket)
     WFX_PROFILE_BLOCK_START(PostReceive_Lease);
 
     // Lazy-allocate receive buffer
-    if(!ctx.buffer) {
-        constexpr std::size_t defaultSize = 4096;
+    constexpr std::size_t defaultSize = 4096;
 
+    if(!ctx.buffer) {
         ctx.buffer = static_cast<char*>(bufferPool_.Lease(defaultSize));
         if(!ctx.buffer) {
             logger_.Error("[IOCP]: Failed to allocate receive buffer for socket: ", socket);
@@ -191,26 +194,34 @@ void IocpConnectionHandler::PostReceive(WFXSocket socket)
         ctx.dataLength = 0;
     }
 
-    // Do not continue if buffer overflows would happen
-    if(ctx.dataLength >= ctx.bufferSize || ctx.dataLength >= ctx.maxBufferSize) {
-        logger_.Error("[IOCP]: Max buffer size exceeded for socket: ", socket,
-                      ", bufferSize=", ctx.bufferSize, ", dataLength=", ctx.dataLength,
-                      ", maxBufferSize=", ctx.maxBufferSize);
-        Close(socket);
-        return;
+    // The way we want it is simple, we have a buffer which can grow to a certain limit 'ctx.maxBufferSize'
+    // The buffer, when growing, will increment in 'defaultSize' when 'ctx.dataLength' reaches 'ctx.bufferSize - 1'
+    // '-1' for the null terminator :)
+    if(ctx.dataLength >= ctx.bufferSize - 1) {
+        // The buffer can no longer grow. Hmmm, lets kill the connection lmao
+        if(ctx.bufferSize >= ctx.maxBufferSize) {
+            logger_.Error("[IOCP]: Max limit for connection buffer reached for socket: ", socket);
+            Close(socket);
+            return;
+        }
+
+        // The buffer can grow
+        std::size_t newSize = ctx.bufferSize + defaultSize;
+        void* newBuffer = bufferPool_.Lease(newSize);
+        if(!newBuffer) {
+            logger_.Error("[IOCP]: Failed to resize connection buffer for socket: ", socket);
+            Close(socket);
+            return;
+        }
+
+        std::memcpy(newBuffer, ctx.buffer, ctx.dataLength);
+        bufferPool_.Release(ctx.buffer);
+        
+        // Congrats, our buffer just grew :)
+        ctx.buffer     = static_cast<char*>(newBuffer);
+        ctx.bufferSize = newSize;
     }
-
-    // Compute safe length that won't exceed buffer or policy
-    const size_t remainingBufferSize = ctx.bufferSize - ctx.dataLength;
-    const size_t remainingPolicySize = ctx.maxBufferSize - ctx.dataLength;
-    const size_t safeRecvLen         = std::min(remainingBufferSize, remainingPolicySize);
-
-    if(safeRecvLen == 0) {
-        logger_.Error("[IOCP]: No room left to receive data for socket: ", socket);
-        Close(socket);
-        return;
-    }
-
+    
     WFX_PROFILE_BLOCK_END(PostReceive_Lease);
     WFX_PROFILE_BLOCK_START(PostReceive_New);
 
@@ -222,11 +233,14 @@ void IocpConnectionHandler::PostReceive(WFXSocket socket)
         return;
     }
 
+    // Compute safe length that won't exceed buffer or policy. -1 for null terminator :)
+    const size_t remainingBufferSize = ctx.bufferSize - ctx.dataLength - 1;
+
     ioData->overlapped    = {};
     ioData->operationType = PerIoOperationType::RECV;
     ioData->socket        = socket;
     ioData->wsaBuf.buf    = ctx.buffer + ctx.dataLength;
-    ioData->wsaBuf.len    = static_cast<ULONG>(safeRecvLen);  // Always safe now
+    ioData->wsaBuf.len    = static_cast<ULONG>(remainingBufferSize);
 
     DWORD flags = 0, bytesRecv = 0;
     int ret = WSARecv(socket, &ioData->wsaBuf, 1, &bytesRecv, &flags, &ioData->overlapped, nullptr);
@@ -280,7 +294,7 @@ void IocpConnectionHandler::WorkerLoop()
 
                 auto* ctxPtr = connections_.Get(clientSocket);
                 if(!ctxPtr || !(*ctxPtr)) {
-                    logger_.Error("[IOCP]: No ConnectionContext found for RECV socket: ", clientSocket);
+                    logger_.Error("[IOCP]: No Connection Context found for RECV socket: ", clientSocket);
                     Close(clientSocket);
                     break;
                 }
@@ -289,7 +303,7 @@ void IocpConnectionHandler::WorkerLoop()
 
                 // Just in case
                 if(!ctx.onReceive) {
-                    logger_.Error("[IOCP]: No receive callback set for socket: ", clientSocket);
+                    logger_.Error("[IOCP]: No Receive Callback set for socket: ", clientSocket);
                     Close(clientSocket);
                     break;
                 }
@@ -297,11 +311,12 @@ void IocpConnectionHandler::WorkerLoop()
                 // Update buffer state
                 ctx.dataLength += bytesTransferred;
 
+                // Add null terminator
+                ctx.buffer[ctx.dataLength] = '\0';
+
                 // Just call the callback from within the offload thread without moving it
                 offloadCallbacks_.enqueue([&ctx]() mutable {
-                    WFX_PROFILE_BLOCK_START(Offloaded_CB);
                     ctx.onReceive(ctx);
-                    WFX_PROFILE_BLOCK_END(Offloaded_CB);
                 });
 
                 WFX_PROFILE_BLOCK_END(RECV_Handle);
