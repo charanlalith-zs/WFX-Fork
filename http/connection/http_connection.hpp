@@ -8,53 +8,121 @@
 #include <functional>
 
 #ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
     #include <WinSock2.h>
+    #include <ws2tcpip.h>
+
     using WFXSocket = SOCKET;
     constexpr WFXSocket WFX_INVALID_SOCKET = INVALID_SOCKET;
 #else
-    #include <cstdint>
+    #include <netinet/in.h>  // in_addr, in6_addr
+    #include <arpa/inet.h>   // inet_ntop, inet_pton
+
     using WFXSocket = int; // On Linux/Unix, sockets are file descriptors (ints)
     constexpr WFXSocket WFX_INVALID_SOCKET = -1;
 #endif
 
-// For 'MoveOnlyFunction'
-using WFX::Utils::MoveOnlyFunction;
+namespace WFX::Http {
 
-// When connection is accepted, upper layers will recieve the connection data (Socket and IP)
-// For that, we need a callback
-// And for the callback, we need the data :)
-struct WFXAcceptedConnectionInfo {
-    virtual ~WFXAcceptedConnectionInfo() = default;
-    virtual WFXSocket        GetSocket() const = 0;
-    virtual std::string_view GetIp()     const = 0;
-    virtual uint64_t         GetIpType() const = 0;
+// Cross-Platform compatible Ip Struct
+struct WFXIpAddress {
+    union {
+        in_addr  v4;
+        in6_addr v6;
+        uint8_t  raw[16]; // For hashing
+    } ip;
+
+    uint8_t ipType; // AF_INET or AF_INET6
+
+    // Necessary operations
+    inline WFXIpAddress& operator=(const WFXIpAddress& other)
+    {
+        ipType = other.ipType;
+
+        switch(ipType)
+        {
+            case AF_INET:
+                memcpy(&ip.v4, &other.ip.v4, sizeof(in_addr));
+                break;
+            
+            case AF_INET6:
+                memcpy(&ip.v6, &other.ip.v6, sizeof(in6_addr));
+                break;
+
+            default:
+                memset(&ip, 0, sizeof(ip)); // To be safe on invalid type
+                break;
+        }
+
+        return *this;
+    }
+
+    inline bool operator==(const WFXIpAddress& other) const
+    {
+        if(ipType != other.ipType)
+            return false;
+
+        return memcmp(ip.raw, other.ip.raw, ipType == AF_INET ? 4 : 16) == 0;
+    }
+
+    inline std::size_t Hash() const
+    {
+        const size_t len = (ipType == AF_INET) ? 4 : 16;
+        std::size_t h = 14695981039346656037ULL;
+        
+        h = (h ^ ipType) * 1099511628211ULL;
+
+        for(size_t i = 0; i < len; ++i)
+            h = (h ^ ip.raw[i]) * 1099511628211ULL;
+
+        return h;
+    }
+
+    // Helper functions
+    std::string_view GetIpStr() const
+    {
+        // Use thread-local static buffer to avoid heap allocation
+        thread_local char ipStrBuf[INET6_ADDRSTRLEN] = {};
+
+        const void* addr = (ipType == AF_INET)
+            ? static_cast<const void*>(&ip.v4)
+            : static_cast<const void*>(&ip.v6);
+
+        // Convert to printable form
+        if(inet_ntop(ipType, addr, ipStrBuf, sizeof(ipStrBuf))) {
+            return std::string_view(ipStrBuf);
+        }
+
+        return std::string_view("ip-malformed");
+    }
+
+    const char* GetIpType() const
+    {
+        return ipType == AF_INET ? "IPv4" : "IPv6";
+    }
 };
 
 // Forward declare it so compilers won't cry
 struct ConnectionContext;
 
-using ReceiveCallback = MoveOnlyFunction<void(ConnectionContext&)>;
+// For 'MoveOnlyFunction'
+using WFX::Utils::MoveOnlyFunction;
 
-using AcceptedConnectionDeleter      = MoveOnlyFunction<void(WFXAcceptedConnectionInfo*)>;
-using AcceptedConnectionCallbackData = std::unique_ptr<WFXAcceptedConnectionInfo, AcceptedConnectionDeleter>;
-using AcceptedConnectionCallback     = MoveOnlyFunction<void(WFXSocket)>;
+using ReceiveCallback            = MoveOnlyFunction<void(ConnectionContext&)>;
+using AcceptedConnectionCallback = MoveOnlyFunction<void(WFXSocket)>;
 
 // Quite important
 struct ConnectionContext {
-    WFXSocket socket;
-    
+    WFXSocket socket = WFX_INVALID_SOCKET;
+
     char*  buffer        = nullptr;
     size_t bufferSize    = 0;
     size_t dataLength    = 0;
     size_t maxBufferSize = 16 * 1024; // 16KB. Can be set by the user as well
     
     ReceiveCallback onReceive;
-
-    // Accepted connection info (moved in on accept)
-    AcceptedConnectionCallbackData acceptInfo;
+    WFXIpAddress    connInfo;
 };
-
-namespace WFX::Http {
 
 // Abstraction for Windows and Linux impl
 class HttpConnectionHandler {

@@ -143,8 +143,6 @@ void IocpConnectionHandler::Run(AcceptedConnectionCallback onAccepted)
     if(!acceptManager_.Initialize(listenSocket_, iocp_))
         logger_.Fatal("[IOCP]: Failed to initialize AcceptExManager");
 
-    logger_.Info("[IOCP]: AcceptExManager initialized with ", AcceptExManager::MAX_SLOTS, " pending accepts.");
-
     unsigned int cores          = std::thread::hardware_concurrency();
     unsigned int iocpThreads    = std::max(2u, cores);
     unsigned int offloadThreads = std::max(2u, cores);
@@ -347,11 +345,9 @@ void IocpConnectionHandler::WorkerLoop()
                 acceptManager_.HandleSocketOptions(client);
 
                 // Take ownership of PostAcceptOp directly
-                AcceptedConnectionCallbackData acceptOp(
+                std::unique_ptr<PostAcceptOp, std::function<void(PostAcceptOp*)>> acceptOp(
                     static_cast<PostAcceptOp*>(base),
-                    [this](WFXAcceptedConnectionInfo* ptr) mutable {
-                        if(!ptr) return;
-
+                    [this](PostAcceptOp* ptr) {
                         bufferPool_.Release(ptr);
                     }
                 );
@@ -361,8 +357,9 @@ void IocpConnectionHandler::WorkerLoop()
                 ConnectionContextPtr connectionContext(
                     new ConnectionContext(), ConnectionContextDeleter{this}
                 );
-                connectionContext->socket     = client;
-                connectionContext->acceptInfo = std::move(acceptOp);
+
+                connectionContext->socket   = client;
+                connectionContext->connInfo = acceptOp->ipAddr;
 
                 if(!connections_.Emplace(client, std::move(connectionContext)))
                     logger_.Fatal("[IOCP]: Failed to create ConnectionContext for socket: ", client);

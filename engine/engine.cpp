@@ -32,8 +32,8 @@ void Engine::Stop()
 void Engine::HandleConnection(WFXSocket socket)
 {
     connHandler_->SetReceiveCallback(socket, [this, socket](ConnectionContext& ctx) {
-        logger_.Info("Connected IP Address: ", ctx.acceptInfo->GetIp(),
-            " of type: ", ctx.acceptInfo->GetIpType() == AF_INET ? "IPv4" : "IPv6");
+        logger_.Info("Connected IP Address: ", ctx.connInfo.GetIpStr(),
+            " of type: ", ctx.connInfo.GetIpType());
 
         this->HandleRequest(socket, ctx);
     });

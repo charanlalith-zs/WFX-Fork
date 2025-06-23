@@ -130,21 +130,21 @@ void AcceptExManager::HandleAcceptCompletion(PerIoContext* ctx)
         case AF_INET:
         {
             sockaddr_in* ipv4 = reinterpret_cast<sockaddr_in*>(remoteSockaddr);
-            inet_ntop(AF_INET, &ipv4->sin_addr, acceptOp->ip, sizeof(acceptOp->ip));
-            acceptOp->ipType = AF_INET;
+            acceptOp->ipAddr.ip.v4  = ipv4->sin_addr;
+            acceptOp->ipAddr.ipType = AF_INET;
             break;
         }
         case AF_INET6:
         {
             sockaddr_in6* ipv6 = reinterpret_cast<sockaddr_in6*>(remoteSockaddr);
-            inet_ntop(AF_INET6, &ipv6->sin6_addr, acceptOp->ip, sizeof(acceptOp->ip));
-            acceptOp->ipType = AF_INET6;
+            acceptOp->ipAddr.ip.v6  = ipv6->sin6_addr;
+            acceptOp->ipAddr.ipType = AF_INET6;
             break;
         }
         default:
         {
-            acceptOp->ip[0] = '\0';
-            acceptOp->ipType = 0;
+            std::memset(&acceptOp->ipAddr.ip, 0, sizeof(acceptOp->ipAddr.ip));
+            acceptOp->ipAddr.ipType = 0;
             break;
         }
     }

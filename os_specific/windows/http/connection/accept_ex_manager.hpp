@@ -1,6 +1,8 @@
 #ifndef WFX_WINDOWS_ACCEPT_EX_MANAGER_HPP
 #define WFX_WINDOWS_ACCEPT_EX_MANAGER_HPP
 
+#define WIN32_LEAN_AND_MEAN
+
 #include "http/connection/http_connection.hpp"
 #include "http/limits/ip_connection_limiter/ip_connection_limiter.hpp"
 #include "utils/fixed_pool/fixed_pool.hpp"
@@ -15,6 +17,9 @@
 #include <functional>
 
 namespace WFX::OSSpecific {
+
+using namespace WFX::Utils; // For 'Logger'
+using namespace WFX::Http;  // All the stuff from http_connection.hpp
 
 // I/O operation types for tracking overlapped operations
 enum class PerIoOperationType {
@@ -51,17 +56,9 @@ struct PostRecvOp : PerIoBase {
 };
 static PostRecvOp ARM_RECV_OP;
 
-struct PostAcceptOp : PerIoBase, WFXAcceptedConnectionInfo {
-    char     ip[INET6_ADDRSTRLEN];
-    uint64_t ipType;
-
-    WFXSocket        GetSocket() const override { return socket; }
-    std::string_view GetIp()     const override { return ip; }
-    uint64_t         GetIpType() const override { return ipType; }
+struct PostAcceptOp : PerIoBase {
+    WFXIpAddress ipAddr;
 };
-
-using namespace WFX::Utils; // For 'Logger'
-using namespace WFX::Http;  // For 'IpConnectionLimiter'
 
 class AcceptExManager {
 public:

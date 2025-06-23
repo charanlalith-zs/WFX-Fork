@@ -1,6 +1,8 @@
 #ifndef WFX_WINDOWS_IOCP_CONNECTION_HANDLER_HPP
 #define WFX_WINDOWS_IOCP_CONNECTION_HANDLER_HPP
 
+#define WIN32_LEAN_AND_MEAN
+
 #include "accept_ex_manager.hpp"
 #include "third_party/concurrent_queue/blockingconcurrentqueue.h"
 #include "http/connection/http_connection.hpp"
