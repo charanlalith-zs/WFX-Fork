@@ -24,7 +24,7 @@ inline constexpr bool EndsWith(std::string_view str, std::string_view suffix) no
            str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-inline constexpr bool CaseInsensitiveCompare(std::string_view lhs, std::string_view rhs)
+inline constexpr bool CaseInsensitiveCompare(std::string_view lhs, std::string_view rhs) noexcept
 {
     if(lhs.size() != rhs.size())
         return false;
@@ -37,7 +37,7 @@ inline constexpr bool CaseInsensitiveCompare(std::string_view lhs, std::string_v
 }
 
 // vvv Conversions vvv
-inline std::string UInt64ToStr(uint64_t value, const std::string& fallback = "0")
+inline std::string UInt64ToStr(uint64_t value, const std::string& fallback = "0") noexcept
 {
     // Max decimal digits for uint64_t = 20, plus one for null terminator
     char buf[21];
@@ -73,6 +73,18 @@ inline constexpr bool StrToUInt64(std::string_view str, std::uint64_t& out) noex
 
     out = result;
     return true;
+}
+
+inline constexpr std::uint8_t UInt8FromHexChar(std::uint8_t uc) noexcept
+{
+    // Convert ASCII '0'-'9', 'a'-'f', 'A'-'F' to 0-15. Invalid chars return 0xFF
+    uint8_t lo = uc - '0';
+    uint8_t hi = (uc | 0x20) - 'a';  // case-insensitive: 'A'-'F' and 'a'-'f'
+
+    uint8_t isDigit = (lo < 10);
+    uint8_t isHex   = (hi < 6);
+
+    return (isDigit * lo) | (isHex * (hi + 10)) | ((isDigit | isHex) ? 0 : 0xFF);
 }
 
 } // namespace WFX::Utils

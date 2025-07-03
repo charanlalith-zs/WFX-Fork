@@ -1,0 +1,68 @@
+#ifndef WFX_CONFIG_HPP
+#define WFX_CONFIG_HPP
+
+#include <string_view>
+#include <cstdint>
+#include <thread>
+
+#include "utils/logger/logger.hpp"
+
+namespace WFX::Core {
+
+using namespace WFX::Utils; // For 'Logger'
+
+// Every struct represents a section of configuration
+struct NetworkConfig {
+    std::uint32_t maxRecvBufferSize  = 16 * 1024;
+    std::uint32_t bufferIncrSize     = 4 * 1024;
+
+    std::uint16_t headerReserveHintSize = 512;
+    std::uint32_t maxHeaderTotalSize    = 8 * 1024;
+    std::uint32_t maxHeaderTotalCount   = 64;
+    std::uint32_t maxBodyTotalSize      = 8 * 1024;
+
+    std::uint64_t maxConnections      = 10000;
+    std::int32_t  maxConnectionsPerIp = 20;
+    std::int16_t  maxRequestBurstSize = 10;
+    std::int16_t  maxTokensPerSecond  = 5;
+};
+
+struct OSSpecificConfig {
+#ifdef _WIN32
+    std::uint32_t maxAcceptSlots      = 1024;
+    std::uint16_t workerThreadCount   = 2;
+    std::uint16_t callbackThreadCount = 4;
+#else
+    std::uint32_t workerConnections = 4 * 1024;
+#endif
+};
+
+// Main Config loader
+// TODO: Add checks for maxRecvBufferSize >= maxHeaderTotalSize + maxBodyTotalSize
+class Config {
+public:
+    NetworkConfig    networkConfig;
+    OSSpecificConfig osSpecificConfig;
+
+    // vvv Access vvv
+    static Config& GetInstance();
+
+    // vvv Load from TOML vvv
+    void LoadFromFile(const std::string_view& path);
+
+private:
+    Config() = default;
+    ~Config() = default;
+
+    Config(const Config&)            = delete;
+    Config& operator=(const Config&) = delete;
+    Config(Config&&)                 = delete;
+    Config& operator=(Config&&)      = delete;
+
+private:
+    Logger& logger_ = Logger::GetInstance();
+};
+
+} // namespace WFX::Core
+
+#endif  // WFX_CONFIG_HPP

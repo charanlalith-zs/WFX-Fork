@@ -1,7 +1,8 @@
-// ip_connection_limiter.hpp
-#pragma once
+#ifndef WFX_HTTP_IP_LIMITER_HPP
+#define WFX_HTTP_IP_LIMITER_HPP
 
 #include "../base_limiter.hpp"
+#include "config/config.hpp"
 #include "utils/hash_map/concurrent_hash_map.hpp"
 
 #include <string>
@@ -10,7 +11,8 @@
 
 namespace WFX::Http {
 
-using namespace WFX::Utils;
+using namespace WFX::Core;  // For 'Config'
+using namespace WFX::Utils; // For 'ConcurrentHashMap'
 
 class IpLimiter : BaseLimiter {
 public:
@@ -36,7 +38,7 @@ private:
 
 private:
     struct TokenBucket {
-        int tokens = MAX_TOKENS;
+        int tokens = 0;
         std::chrono::steady_clock::time_point lastRefill = std::chrono::steady_clock::now();
     };
 
@@ -45,11 +47,9 @@ private:
         TokenBucket bucket;
     };
 
-    static constexpr int MAX_CONNECTIONS = 20;  // Per normalized Ip
-    static constexpr int MAX_TOKENS = 10;       // Request burst size
-    static constexpr int REFILL_RATE = 5;       // Tokens per second
-
     ConcurrentHashMap<WFXIpAddress, IpLimiterEntry, 64, 128> ipLimits_;
 };
 
 } // namespace WFX::Http
+
+#endif // WFX_HTTP_IP_LIMITER_HPP

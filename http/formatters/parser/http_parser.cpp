@@ -2,18 +2,23 @@
 
 namespace WFX::Http {
 
+using namespace WFX::Utils;
+
 HttpParseState HttpParser::Parse(ConnectionContext& ctx)
 {
     // Sanity checks
     if(!ctx.buffer || ctx.dataLength == 0)
         return HttpParseState::PARSE_ERROR;
 
-    // Bunch of stuff idk
-    auto& state     = ctx.parseInfo.state;
-    auto& trackBytes = ctx.parseInfo.trackBytes;
+    // Config variables
+    std::uint32_t maxBufferSize = Config::GetInstance().networkConfig.maxRecvBufferSize;
+    std::uint32_t maxBodySize   = Config::GetInstance().networkConfig.maxBodyTotalSize;
 
-    const char* data = ctx.buffer;
-    std::size_t size = ctx.dataLength;
+    // Ctx variabled
+    std::uint8_t&  state      = ctx.state;
+    std::uint32_t& trackBytes = ctx.trackBytes;
+    const char*    data       = ctx.buffer;
+    std::size_t    size       = ctx.dataLength;
 
     // Ensure requestInfo is allocated. If not, lazy initialize it
     if(!ctx.requestInfo)
@@ -48,31 +53,46 @@ HttpParseState HttpParser::Parse(ConnectionContext& ctx)
             // We also need to update connection alive status
             // If we do not find the header, we will assume client wants to close
             auto conn = request.headers.GetHeader("Connection");
-            if(conn.empty() || WFX::Utils::CaseInsensitiveCompare(conn, "close"))
-                ctx.parseInfo.shouldClose = true;
+            if(conn.empty() || CaseInsensitiveCompare(conn, "close"))
+                ctx.shouldClose = true;
             
-            // Now we check the type, whether its streaming data or all at once kinda stuff
+            // Now we check the type, whether its streaming data or all at once kinda stuff or expect header
+            auto expectHeader        = request.headers.GetHeader("Expect");
             auto contentLengthHeader = request.headers.GetHeader("Content-Length");
             auto encodingHeader      = request.headers.GetHeader("Transfer-Encoding");
 
+            bool hasExpectHeader        = !expectHeader.empty() && CaseInsensitiveCompare(expectHeader, "100-continue");
             bool hasContentLengthHeader = !contentLengthHeader.empty();
             bool hasEncodingHeader      = !encodingHeader.empty();
             
             // RFC Spec Violation: Both headers cannot be present at the same time
             if(hasEncodingHeader && hasContentLengthHeader)
                 return HttpParseState::PARSE_ERROR;
+
+            // Handle invalid Expect case: Expect present but no body indication
+            if(hasExpectHeader && !hasContentLengthHeader && !hasEncodingHeader)
+                return HttpParseState::PARSE_EXPECT_417;
             
             // Data should be fetched all at once
             if(hasContentLengthHeader) {
                 std::size_t contentLen = 0;
                 // Malformed Content-Length
-                if(!WFX::Utils::StrToUInt64(contentLengthHeader, contentLen))
+                if(!StrToUInt64(contentLengthHeader, contentLen))
                     return HttpParseState::PARSE_ERROR;
+
+                if(hasExpectHeader) {
+                    if(contentLen > maxBodySize)
+                        return HttpParseState::PARSE_EXPECT_417;
+
+                    // Set the state so the next time parser returns to this, it knows to parse body not header
+                    state = static_cast<std::uint8_t>(HttpParseState::PARSE_INCOMPLETE_BODY);
+                    return HttpParseState::PARSE_EXPECT_100;
+                }
 
                 // Body exists
                 if(contentLen > 0) {
                     // Sanity check: are we about to exceed our max buffer size? Reject oversized payload
-                    if(contentLen > ctx.maxBufferSize - 1 || headerEnd > ctx.maxBufferSize - 1 - contentLen)
+                    if(contentLen > maxBufferSize - 1 || headerEnd > maxBufferSize - 1 - contentLen)
                         return HttpParseState::PARSE_ERROR;
 
                     // Calc total body which recv got till now
@@ -82,7 +102,7 @@ HttpParseState HttpParser::Parse(ConnectionContext& ctx)
                     if(availableBody < contentLen) {
                         // In INCOMPLETE_BODY, this means: wait until ctx.dataLength >= trackBytes
                         trackBytes = headerEnd + contentLen;
-                        request.expectedBodyLength = contentLen;
+                        ctx.expectedBodyLength = contentLen;
                         state = static_cast<std::uint8_t>(HttpParseState::PARSE_INCOMPLETE_BODY);
                         return HttpParseState::PARSE_INCOMPLETE_BODY;
                     }
@@ -104,11 +124,15 @@ HttpParseState HttpParser::Parse(ConnectionContext& ctx)
             // Data is chunked / gzip / whatever [future support]
             if(hasEncodingHeader) {
                 // Only 'chunked' is supported for now
-                if(!WFX::Utils::CaseInsensitiveCompare(encodingHeader, "chunked"))
+                if(!CaseInsensitiveCompare(encodingHeader, "chunked"))
                     return HttpParseState::PARSE_ERROR;
-                
+
                 // Parser will not try to buffer the full body – instead user will handle chunks
                 state = static_cast<std::uint8_t>(HttpParseState::PARSE_STREAMING_BODY);
+                
+                if(hasExpectHeader)
+                    return HttpParseState::PARSE_EXPECT_100;
+
                 return HttpParseState::PARSE_STREAMING_BODY;
             }
 
@@ -129,12 +153,12 @@ HttpParseState HttpParser::Parse(ConnectionContext& ctx)
                 return HttpParseState::PARSE_INCOMPLETE_BODY;
 
             HttpRequest& request = *ctx.requestInfo;
-            std::size_t pos = trackBytes - request.expectedBodyLength;
+            std::size_t pos = trackBytes - ctx.expectedBodyLength;
 
-            if(!ParseBody(data, size, pos, request.expectedBodyLength, request))
+            if(!ParseBody(data, size, pos, ctx.expectedBodyLength, request))
                 return HttpParseState::PARSE_ERROR;
 
-            ctx.parseInfo.state = static_cast<std::uint8_t>(HttpParseState::PARSE_SUCCESS);
+            ctx.state = static_cast<std::uint8_t>(HttpParseState::PARSE_SUCCESS);
             return HttpParseState::PARSE_SUCCESS;
         }
         
@@ -191,13 +215,15 @@ bool HttpParser::ParseHeaders(const char* data, std::size_t size, std::size_t& p
     std::size_t nextPos          = 0;
     std::string_view line;
 
+    auto& networkConfig = Config::GetInstance().networkConfig;
+
     while(true) {
         if(!SafeFindCRLF(data, size, pos, nextPos, line))
             return false;
 
         std::size_t lineBytes = nextPos - pos;
         headerTotalBytes += lineBytes;
-        if(headerTotalBytes > MAX_HEADER_TOTAL_SIZE)
+        if(headerTotalBytes > networkConfig.maxHeaderTotalSize)
             return false;
 
         pos = nextPos;
@@ -214,7 +240,7 @@ bool HttpParser::ParseHeaders(const char* data, std::size_t size, std::size_t& p
 
         outHeaders.SetHeader(key, val);
 
-        if(++headerCount > MAX_HEADERS_TOTAL_COUNT)
+        if(++headerCount > networkConfig.maxHeaderTotalCount)
             return false;
     }
 
@@ -228,7 +254,7 @@ bool HttpParser::ParseBody(const char* data, std::size_t size, std::size_t& pos,
         return false;
     
     // Max body size constraint
-    if(contentLen > MAX_BODY_TOTAL_SIZE)
+    if(contentLen > Config::GetInstance().networkConfig.maxBodyTotalSize)
         return false;
 
     outRequest.body = std::string_view(data + pos, contentLen);

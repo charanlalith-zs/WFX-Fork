@@ -16,8 +16,14 @@ IpLimiter& IpLimiter::GetInstance()
 bool IpLimiter::AllowConnection(const WFXIpAddress& ip)
 {
     return ipLimits_.GetOrInsertWith(NormalizeIp(ip), [](IpLimiterEntry& entry) -> bool {
-        if(entry.connectionCount >= MAX_CONNECTIONS)
+        auto& cfg = Config::GetInstance().networkConfig;
+
+        if(entry.connectionCount >= cfg.maxConnectionsPerIp)
             return false;
+
+        // Initialize token bucket on first connection if not already set
+        if(entry.connectionCount == 0 && entry.bucket.tokens == 0)
+            entry.bucket.tokens = cfg.maxRequestBurstSize;
 
         ++entry.connectionCount;
         return true;
@@ -26,16 +32,19 @@ bool IpLimiter::AllowConnection(const WFXIpAddress& ip)
 
 bool IpLimiter::AllowRequest(const WFXIpAddress& ip)
 {
-    const auto now = steady_clock::now();
+    return ipLimits_.GetWith(NormalizeIp(ip), [](IpLimiterEntry& entry) -> bool {
+        const auto now = std::chrono::steady_clock::now();
+        const auto& cfg = Config::GetInstance().networkConfig;
 
-    return ipLimits_.GetWith(NormalizeIp(ip), [this, &now](IpLimiterEntry& entry) -> bool {
         TokenBucket& bucket = entry.bucket;
 
-        const auto elapsedMs = duration_cast<milliseconds>(now - bucket.lastRefill).count();
-        const int  refill    = static_cast<int>(elapsedMs * REFILL_RATE / 1000);
+        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - bucket.lastRefill).count();
+        const int refillRate = static_cast<int>(cfg.maxTokensPerSecond);
+        const int burstCap   = static_cast<int>(cfg.maxRequestBurstSize);
+        const int refill     = static_cast<int>(elapsedMs * refillRate / 1000);
 
         if(refill > 0) {
-            bucket.tokens     = std::min(MAX_TOKENS, bucket.tokens + refill);
+            bucket.tokens     = std::min(burstCap, bucket.tokens + refill);
             bucket.lastRefill = now;
         }
 

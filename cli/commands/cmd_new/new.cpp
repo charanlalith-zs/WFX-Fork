@@ -30,9 +30,25 @@ static void ScaffoldProject(const std::string& projectName) {
     fs::create_directories(base / "wfx");
 
     // 2. Create essential config and main file
-    CreateFile(base / "settings.wfx", R"(MIDDLEWARE = ["LoggerMiddleware", "StaticMiddleware"]
-STATIC_DIR = "public"
-TEMPLATE_DIR = "templates"
+    CreateFile(base / "wfx.toml", R"([Network]
+recv_buffer_max              = 16384   # Max total recv buffer size per connection (in bytes)
+recv_buffer_incr             = 4096    # Buffer growth step (in bytes)
+header_reserve_hint          = 512     # Initial header allocation hint size
+max_header_size              = 8192    # Max total size of all headers
+max_header_count             = 64      # Max number of headers allowed
+max_body_size                = 8192    # Max size of request body
+max_connections              = 100000  # Max total concurrent connections
+max_connections_per_ip       = 20      # Per-IP connection cap
+max_request_burst_per_ip     = 10      # Initial request tokens per IP
+max_requests_per_ip_per_sec  = 5       # Refill rate (tokens per second per IP)
+
+[Windows]
+accept_slots       = 4096    # Number of pre-allocated AcceptEx contexts
+connection_threads = 4       # IOCP worker thread count
+request_threads    = 2       # Threads executing user handlers
+
+[Linux]
+worker_connections = 4096    # Max simultaneous epoll-based worker connections
 )");
 
     CreateFile(base / "main.cpp", R"(#include <wfx/app.hpp>

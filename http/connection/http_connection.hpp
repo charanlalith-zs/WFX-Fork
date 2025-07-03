@@ -105,20 +105,21 @@ using HttpRequestPtr             = std::unique_ptr<HttpRequest>;
 
 // Quite important
 struct ConnectionContext {
-    char*         buffer        = nullptr;
-    std::uint32_t bufferSize    = 0;
-    std::uint32_t dataLength    = 0;
-    std::uint32_t maxBufferSize = 16 * 1024; // 16KB. Can be set by the user as well. Max 4GB
+    char*         buffer     = nullptr;
+    std::uint32_t bufferSize = 0;
+    std::uint32_t dataLength = 0;
+    
+    // Also used by HttpParser
+    std::uint32_t expectedBodyLength = 0;
     
     WFXIpAddress    connInfo;
     HttpRequestPtr  requestInfo;
     ReceiveCallback onReceive;
 
-    struct {
-        std::uint8_t  state       = 0;     // Interpreted by HttpParser as internal state enum
-        bool          shouldClose = false; // Whether we should close connection after HttpResponse
-        std::uint32_t trackBytes  = 0;     // Misc, tracking of bytes wherever necessary
-    } parseInfo;
+    // Used by HttpParser mostly
+    std::uint8_t  state        = 0;     // Interpreted by HttpParser as internal state enum
+    bool          shouldClose  = false; // Whether we should close connection after HttpResponse
+    std::uint32_t trackBytes   = 0;     // Misc, tracking of bytes wherever necessary
 };
 
 // Abstraction for Windows and Linux impl

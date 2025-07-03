@@ -111,6 +111,7 @@ int IocpConnectionHandler::Write(WFXSocket socket, std::string_view buffer_)
 
     ioData->overlapped    = { 0 };
     ioData->operationType = PerIoOperationType::SEND;
+    ioData->socket        = socket;
     ioData->wsaBuf.buf    = static_cast<char*>(outBuffer);
     ioData->wsaBuf.len    = static_cast<ULONG>(length);
 
@@ -196,11 +197,9 @@ void IocpConnectionHandler::Run(AcceptedConnectionCallback onAccepted)
     if(!acceptManager_.Initialize(listenSocket_, iocp_))
         logger_.Fatal("[IOCP]: Failed to initialize AcceptExManager");
 
-    unsigned int cores          = std::thread::hardware_concurrency();
-    unsigned int iocpThreads    = std::max(2u, cores);
-    unsigned int offloadThreads = std::max(2u, cores);
-
-    if(!CreateWorkerThreads(iocpThreads, offloadThreads))
+    if(!CreateWorkerThreads(
+        config_.osSpecificConfig.workerThreadCount, config_.osSpecificConfig.callbackThreadCount
+    ))
         return logger_.Fatal("[IOCP]: Failed to start worker threads.");
 }
 
@@ -230,7 +229,7 @@ void IocpConnectionHandler::PostReceive(WFXSocket socket)
     WFX_PROFILE_BLOCK_START(PostReceive_Lease);
 
     // Lazy-allocate receive buffer
-    constexpr std::size_t defaultSize = 4096;
+    std::size_t defaultSize = config_.networkConfig.bufferIncrSize;
 
     if(!ctx.buffer) {
         ctx.buffer = static_cast<char*>(bufferPool_.Lease(defaultSize));
@@ -245,12 +244,12 @@ void IocpConnectionHandler::PostReceive(WFXSocket socket)
         ctx.dataLength = 0;
     }
 
-    // The way we want it is simple, we have a buffer which can grow to a certain limit 'ctx.maxBufferSize'
-    // The buffer, when growing, will increment in 'defaultSize' when 'ctx.dataLength' reaches 'ctx.bufferSize - 1'
+    // The way we want it is simple, we have a buffer which can grow to a certain limit 'config_.networkConfig.maxRecvBufferSize'
+    // The buffer, when growing, will increment in 'defaultSize' till 'ctx.dataLength' reaches 'ctx.bufferSize - 1'
     // '-1' for the null terminator :)
     if(ctx.dataLength >= ctx.bufferSize - 1) {
         // The buffer can no longer grow. Hmmm, lets kill the connection lmao
-        if(ctx.bufferSize >= ctx.maxBufferSize) {
+        if(ctx.bufferSize >= config_.networkConfig.maxRecvBufferSize) {
             logger_.Error("[IOCP]: Max buffer limit reached for socket: ", socket);
             Close(socket);
             return;
@@ -365,12 +364,14 @@ void IocpConnectionHandler::WorkerLoop()
                     static constexpr const char* kRateLimitResponse =
                         "HTTP/1.1 503 Service Unavailable\r\n"
                         "Content-Length: 0\r\n"
-                        "Connection: keep-alive\r\n"
+                        "Connection: close\r\n"
                         "\r\n";
+
+                    // Mark this socket for closure on next SEND call. No need to handle further
+                    ctx.shouldClose = true;
 
                     // Not going to bother checking for return value. This is just for response
                     Write(socket, std::string_view(kRateLimitResponse));
-                    ResumeReceive(socket);
                     break;
                 }
 
@@ -398,7 +399,12 @@ void IocpConnectionHandler::WorkerLoop()
                 // Close if client wants to, by checking ctx.shouldClose
                 // Also Get is quite fast so no issue calling it in hot path
                 auto* ctx = connections_.Get(ioData->socket);
-                if(ctx && *ctx && (*ctx)->parseInfo.shouldClose)
+                if(!ctx || !(*ctx)) {
+                    logger_.Warn("[IOCP]: SEND complete but no context for socket: ", ioData->socket);
+                    break;
+                }
+
+                if((*ctx)->shouldClose)
                     Close(ioData->socket);
                 else
                     ResumeReceive(ioData->socket);
@@ -415,7 +421,12 @@ void IocpConnectionHandler::WorkerLoop()
                 // Close if client wants to, by checking ctx.shouldClose
                 // Also Get is quite fast so no issue calling it in hot path
                 auto* ctx = connections_.Get(transmitFileCtx->socket);
-                if(ctx && *ctx && (*ctx)->parseInfo.shouldClose)
+                if(!ctx || !(*ctx)) {
+                    logger_.Warn("[IOCP]: SEND complete but no context for socket: ", transmitFileCtx->socket);
+                    break;
+                }
+
+                if((*ctx)->shouldClose)
                     Close(transmitFileCtx->socket);
                 else
                     ResumeReceive(transmitFileCtx->socket);

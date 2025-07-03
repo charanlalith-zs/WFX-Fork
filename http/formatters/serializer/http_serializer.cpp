@@ -4,8 +4,11 @@ namespace WFX::Http {
 
 std::string HttpSerializer::Serialize(HttpResponse& res)
 {
+    // WTF
+    auto headerSizeHint = WFX::Core::Config::GetInstance().networkConfig.headerReserveHintSize;
+    
     std::string out;
-    out.reserve(HEADER_RESERVE_SIZE_HINT + (res.IsFileOperation() ? 0 : res.body.size()));
+    out.reserve(headerSizeHint + (res.IsFileOperation() ? 0 : res.body.size()));
 
     // 1. HTTP version and status
     out.append("HTTP/1.");

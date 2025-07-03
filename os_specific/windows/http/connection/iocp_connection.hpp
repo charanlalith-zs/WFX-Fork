@@ -108,8 +108,10 @@ private:
     std::vector<std::thread>   offloadThreads_;
     AcceptedConnectionCallback acceptCallback_;
 
-    Logger& logger_ = Logger::GetInstance();
+    Logger&    logger_  = Logger::GetInstance();
     IpLimiter& limiter_ = IpLimiter::GetInstance();
+    Config&    config_  = Config::GetInstance();
+
     BufferPool bufferPool_{1024 * 1024, [](std::size_t curSize){ return curSize * 2; }}; // For variable size allocs
     ConfigurableFixedAllocPool allocPool_{{32, 64, 128}};                                // For fixed size small allocs
     BlockingConcurrentQueue<std::function<void(void)>> offloadCallbacks_;

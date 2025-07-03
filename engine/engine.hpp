@@ -1,6 +1,8 @@
 #ifndef WFX_ENGINE_HPP
 #define WFX_ENGINE_HPP
 
+#include "config/config.hpp"
+
 #include "http/connection/http_connection_factory.hpp"
 #include "http/formatters/parser/http_parser.hpp"
 #include "http/formatters/serializer/http_serializer.hpp"
@@ -24,6 +26,7 @@ private:
     void HandleResponse(WFXSocket socket, HttpResponse& res, ConnectionContext& ctx);
 
     Logger& logger_ = Logger::GetInstance();
+    Config& config_ = Config::GetInstance();
 
     std::unique_ptr<HttpConnectionHandler> connHandler_;
 };

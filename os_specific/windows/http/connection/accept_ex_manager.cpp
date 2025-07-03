@@ -46,23 +46,26 @@ bool AcceptExManager::Initialize(WFXSocket listenSocket, HANDLE iocp)
     if(result == SOCKET_ERROR || !lpfnGetAcceptExSockaddrs)
         return logger_.Error("[AcceptExManager]: Failed to load GetAcceptExSockaddrs"), false;
 
-    // Zero out all the data for use
-    for(auto& c : contexts_) c = {};
+    // We know exactly how much we using, so reserve it
+    std::uint32_t maxAcceptSlots = config_.osSpecificConfig.maxAcceptSlots;
+    contexts_.resize(maxAcceptSlots);
 
-    for(int i = 0; i < MAX_SLOTS; ++i) {
+    for(int i = 0; i < maxAcceptSlots; ++i) {
         if(!PostAcceptAtSlot(i)) {
             logger_.Error("[AcceptExManager]: Failed to initialize AcceptEx at slot ", i);
             return false;
         }
     }
 
-    logger_.Info("[AcceptExManager]: Initialized ", MAX_SLOTS, " concurrent AcceptEx slots");
+    logger_.Info("[AcceptExManager]: Initialized ", maxAcceptSlots, " concurrent AcceptEx slots");
     return true;
 }
 
 void AcceptExManager::DeInitialize()
 {
-    for(int i = 0; i < MAX_SLOTS; ++i)
+    std::uint32_t maxAcceptSlots = config_.osSpecificConfig.maxAcceptSlots;
+
+    for(int i = 0; i < maxAcceptSlots; ++i)
     {
         if(!(activeSlotsBits_ & (1ULL << i)))
             continue;
@@ -80,7 +83,7 @@ void AcceptExManager::DeInitialize()
 
     activeSlotsBits_ = 0;
     
-    logger_.Info("[AcceptExManager]: DeInitialized ", MAX_SLOTS, " AcceptEx slots");
+    logger_.Info("[AcceptExManager]: DeInitialized ", maxAcceptSlots, " AcceptEx slots");
 }
 
 void AcceptExManager::HandleAcceptCompletion(PerIoContext* ctx)

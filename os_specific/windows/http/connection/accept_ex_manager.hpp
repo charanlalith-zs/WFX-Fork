@@ -3,6 +3,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 
+#include "config/config.hpp"
 #include "http/connection/http_connection.hpp"
 #include "http/limits/ip_limiter/ip_limiter.hpp"
 #include "utils/fixed_pool/fixed_pool.hpp"
@@ -12,12 +13,13 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
-#include <array>
+#include <vector>
 #include <mutex>
 #include <functional>
 
 namespace WFX::OSSpecific {
 
+using namespace WFX::Core;  // For 'Config'
 using namespace WFX::Utils; // For 'Logger'
 using namespace WFX::Http;  // All the stuff from http_connection.hpp
 
@@ -85,9 +87,6 @@ private:
     void        RepostAcceptAtSlot(int slot);
     bool        PostAcceptAtSlot(int slot);
 
-public:
-    constexpr static int MAX_SLOTS = 4096;
-
 private:
     // IMP
     LPFN_ACCEPTEX             lpfnAcceptEx             = nullptr;
@@ -98,9 +97,10 @@ private:
     BufferPool& allocator_;
     Logger&     logger_      = Logger::GetInstance();
     IpLimiter&  connLimiter_ = IpLimiter::GetInstance();
+    Config&     config_      = Config::GetInstance();
 
-    std::array<PerIoContext, MAX_SLOTS> contexts_;
-    uint64_t                            activeSlotsBits_ = 0;
+    std::vector<PerIoContext> contexts_;
+    std::uint64_t             activeSlotsBits_ = 0;
 };
 
 } // namespace WFX::OSSpecific
