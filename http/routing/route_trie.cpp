@@ -82,7 +82,8 @@ void RouteTrie::Insert(std::string_view fullRoute, HttpCallbackType handler)
     current->callback = std::move(handler);
 }
 
-const HttpCallbackType* RouteTrie::Match(std::string_view requestPath, PathSegments& outParams) const {
+const HttpCallbackType* RouteTrie::Match(std::string_view requestPath, PathSegments& outParams) const
+{
     const TrieNode* current = &root;
 
     while(!requestPath.empty()) {
@@ -96,11 +97,9 @@ const HttpCallbackType* RouteTrie::Match(std::string_view requestPath, PathSegme
         DynamicSegment  paramCandidate;
 
         for(const auto& child : current->children) {
-            if(child.IsStatic()) {
-                if(child.MatchesStatic(segment)) {
-                    next = child.GetChild();
-                    break;
-                }
+            if(child.IsStatic() && child.MatchesStatic(segment)) {
+                next = child.GetChild();
+                break;
             }
             else if(child.IsParam()) {
                 ParamType type = child.GetParamType();
@@ -146,11 +145,9 @@ const HttpCallbackType* RouteTrie::Match(std::string_view requestPath, PathSegme
                         return nullptr;
                 }
 
-                // Save the matching param *only if no static matched already*
-                if(!next) {
-                    next = child.GetChild();
-                    outParams.emplace_back(std::move(paramCandidate));
-                }
+                // Match found for dynamic segment — store parameter and proceed
+                next = child.GetChild();
+                outParams.emplace_back(std::move(paramCandidate));
             }
         }
 

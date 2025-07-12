@@ -38,12 +38,15 @@ const HttpCallbackType* Router::MatchRoute(HttpMethod method, std::string_view p
     // -to be cleaned out
     outSegments.clear();
 
+    // Strip query string before matching
+    std::string_view queryStrippedPath = path.substr(0, path.find('?'));
+
     switch(method)
     {
         case HttpMethod::GET:
-            return getRoutes_.Match(path, outSegments);
+            return getRoutes_.Match(queryStrippedPath, outSegments);
         case HttpMethod::POST:
-            return postRoutes_.Match(path, outSegments);
+            return postRoutes_.Match(queryStrippedPath, outSegments);
         default:
             return nullptr;
     }

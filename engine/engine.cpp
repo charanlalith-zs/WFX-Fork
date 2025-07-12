@@ -20,8 +20,16 @@ Engine::Engine()
             .Set("Cache-Control", "no-store")
             .SendText("Hello from WFX!!!!");
     });
+
+    router_.RegisterRoute(HttpMethod::GET, "/send-file/<genre:string>/<index:uint>", [this](HttpRequest& req, HttpResponse& res) {
+        res.Status(HttpStatus::OK)
+            .Set("X-Powered-By", "WFX")
+            .Set("Server", "WFX/1.0")
+            .Set("Cache-Control", "no-store")
+            .SendText("Yooooooooooooooooooooooooooooo!!!!!!!!!");
+    });
     
-    router_.RegisterRoute(HttpMethod::GET, "/send-file/<genre:string>/<index:uint>/<id:uuid>", [this](HttpRequest& req, HttpResponse& res) {
+    router_.RegisterRoute(HttpMethod::GET, "/send-file/<genre:string>/<index:uint>/<id:string>", [this](HttpRequest& req, HttpResponse& res) {
         res.Status(HttpStatus::OK)
             .Set("X-Powered-By", "WFX")
             .Set("Server", "WFX/1.0")

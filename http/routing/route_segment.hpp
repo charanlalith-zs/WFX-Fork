@@ -25,6 +25,8 @@ enum class ParamType : std::uint8_t {
 // Forward declare so TrieNode doesn't cry
 struct RouteSegment;
 
+// TODO: Optimize later like compressed_pair does, so only leaf nodes have callback use memory
+// In rest of the nodes, callback shouldn't take any memory
 struct TrieNode {
     // Child segments
     std::vector<RouteSegment> children;
