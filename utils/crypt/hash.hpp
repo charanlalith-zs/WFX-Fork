@@ -1,7 +1,6 @@
 #ifndef WFX_UTILS_HASHERS_HPP
 #define WFX_UTILS_HASHERS_HPP
 
-#include "include/export_signature.hpp"
 #include "utils/logger/logger.hpp"
 #include "./string.hpp"
 
@@ -29,7 +28,7 @@
 namespace WFX::Utils {
 
 // vvv HASHERS vvv
-class WFX_API Hasher {
+class Hasher final {
 public:
     static std::size_t SipHash24(const std::uint8_t* data, std::size_t len, const std::uint8_t key[16]);
     static std::size_t SipHash24(std::string_view data, const std::uint8_t key[16]);
@@ -43,7 +42,7 @@ private:
 };
 
 // vvv TRUE RANDOMIZER vvv
-class WFX_API RandomPool {
+class RandomPool final {
     static constexpr std::size_t BUFFER_SIZE = 1024 * 1024; // Stores 1MB worth of random bytes
     static constexpr std::size_t MAX_RETRIES = 32; // Retries for GetBytes function
 

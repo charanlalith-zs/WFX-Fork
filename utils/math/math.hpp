@@ -1,15 +1,13 @@
 #ifndef WFX_UTILS_MATH_HPP
 #define WFX_UTILS_MATH_HPP
 
-#include "include/export_signature.hpp"
-
 #include <cstdint>
 #include <cstddef>
 
 namespace WFX::Utils {
 
 // Used as namespace lmao
-class WFX_API Math {
+class Math final {
 public:
     // 2 ^ Power functions
     static std::size_t RoundUpToPowerOfTwo(std::size_t x);

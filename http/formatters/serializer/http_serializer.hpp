@@ -9,10 +9,12 @@
 
 namespace WFX::Http {
 
+using SerializedHttpResponse = std::pair<std::string, std::string_view>;
+    
 // Being used as a namespace rn, fun again
 class HttpSerializer final {
 public:
-    static std::string Serialize(HttpResponse& res);
+    static SerializedHttpResponse Serialize(HttpResponse& res);
 
 private:
     HttpSerializer()  = delete;

@@ -1,12 +1,11 @@
 #ifndef WFX_UTILS_STRING_HPP
 #define WFX_UTILS_STRING_HPP
 
-#include "include/export_signature.hpp"
 #include <string_view>
 
 namespace WFX::Utils {
 
-class WFX_API StringGuard {
+class StringGuard final {
 public:
     static std::uint8_t ToLowerAscii(std::uint8_t c);
 

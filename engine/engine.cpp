@@ -162,11 +162,11 @@ void Engine::HandleRequest(WFXSocket socket, ConnectionContext& ctx)
 
 void Engine::HandleResponse(WFXSocket socket, HttpResponse& res, ConnectionContext& ctx)
 {   
-    std::string serializedContent = HttpSerializer::Serialize(res);
+    auto&& [serializedContent, bodyView] = HttpSerializer::Serialize(res);
     
     // File operation via TransmitFile, res.body contains the file path
     if(res.IsFileOperation())
-        connHandler_->WriteFile(socket, std::move(serializedContent), res.body);
+        connHandler_->WriteFile(socket, std::move(serializedContent), bodyView);
     // Regular WSASend write (text, JSON, etc)
     else
         connHandler_->Write(socket, serializedContent);

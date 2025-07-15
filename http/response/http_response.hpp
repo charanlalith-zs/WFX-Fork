@@ -3,20 +3,15 @@
 
 #include "http/constants/http_constants.hpp"
 #include "http/headers/http_headers.hpp"
-#include "http/common/http_detector.hpp"
 
-#include "utils/filesystem/filesystem.hpp"
-#include "utils/backport/string.hpp"
-#include "utils/logger/logger.hpp"
+#include "third_party/nlohmann/json_fwd.hpp"
 
-#include "third_party/nlohmann/json.hpp"
-
-#include <type_traits>
-#include <charconv>
+#include <variant>
 #include <string>
 
 // To keep naming consistent :)
-using Json = nlohmann::json;
+using Json     = nlohmann::json;
+using BodyType = std::variant<std::monostate, std::string_view, std::string>;
 
 namespace WFX::Http {
 
@@ -24,34 +19,32 @@ struct HttpResponse {
     HttpVersion     version = HttpVersion::HTTP_1_1;
     HttpStatus      status  = HttpStatus::OK;
     ResponseHeaders headers;
-    std::string     body;
+    BodyType        body;
 
-    // Setters
-    HttpResponse& Status(HttpStatus code)
-    {
-        status = code; return *this;
-    }
+    HttpResponse& Status(HttpStatus code);
+    HttpResponse& Set(const std::string& key, const std::string& value);
+    bool IsFileOperation() const;
 
-    HttpResponse& Set(const std::string& key, const std::string& value)
-    {
-        headers.SetHeader(key, value); return *this;
-    }
+    void SendText(const char* cstr);
+    void SendText(std::string_view view);
+    void SendText(std::string&& str);
 
-    // Getters
-    bool IsFileOperation() { return isFileOperation; }
+    void SendJson(const Json& j);
+    void SendJson(Json&& j);
 
-    // Senders (Templated for ease of copying and moving semantics)
-    template<typename T> void SendText(T&& text);
-    template<typename T> void SendJson(T&& json);
-    template<typename T> void SendFile(T&& path);
+    void SendFile(const char* cstr);
+    void SendFile(std::string_view path);
+    void SendFile(std::string&& path);
 
-private: // So users can't 'accidentally' access this and set this
-    bool isFileOperation = false;
+private:
+    void SetTextBody(std::string&& text, const char* contentType);
+    void PrepareFileHeaders(std::string_view path);
+    void ValidateFileSend(std::string_view path);
+
+private:
+    bool isFileOperation_ = false;
 };
 
 } // namespace WFX::Http
-
-// For template definitions
-#include "http_response.ipp"
 
 #endif // WFX_HTTP_RESPONSE_HPP

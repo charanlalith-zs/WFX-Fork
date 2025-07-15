@@ -2,13 +2,22 @@
 
 namespace WFX::Http {
 
-std::string HttpSerializer::Serialize(HttpResponse& res)
+SerializedHttpResponse HttpSerializer::Serialize(HttpResponse& res)
 {
     // WTF
     auto headerSizeHint = WFX::Core::Config::GetInstance().networkConfig.headerReserveHintSize;
+
+    const std::string_view bodyView = std::visit([](const auto& val) -> std::string_view {
+        using T = std::decay_t<decltype(val)>;
+
+        if constexpr(std::is_same_v<T, std::monostate>)
+            return {};
+        else
+            return val;
+    }, res.body);
     
     std::string out;
-    out.reserve(headerSizeHint + (res.IsFileOperation() ? 0 : res.body.size()));
+    out.reserve(headerSizeHint + (res.IsFileOperation() ? 0 : bodyView.size()));
 
     // 1. HTTP version and status
     out.append("HTTP/1.");
@@ -41,12 +50,12 @@ std::string HttpSerializer::Serialize(HttpResponse& res)
     // Split
     // Its a file operation: Header only needed
     if(res.IsFileOperation())
-        return out;
+        return std::make_pair(std::move(out), bodyView);
 
     // Its a text operation: Body is also needed
-    out.append(res.body);
+    out.append(bodyView);
 
-    return out;
+    return std::make_pair(std::move(out), std::string_view{});
 }
 
 } // namespace WFX::Http
