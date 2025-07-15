@@ -1,5 +1,9 @@
 #include "http_serializer.hpp"
 
+#include "config/config.hpp"
+#include "utils/crypt/string.hpp"
+#include "utils/filesystem/filesystem.hpp"
+
 namespace WFX::Http {
 
 SerializedHttpResponse HttpSerializer::Serialize(HttpResponse& res)

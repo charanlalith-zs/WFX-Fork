@@ -5,9 +5,6 @@
 #include "http/request/http_request.hpp"
 #include "http/response/http_response.hpp"
 #include "utils/backport/move_only_function.hpp"
-#include "utils/uuid/uuid.hpp"
-
-#include <memory>
 
 // Used throughout the entire program, hopefully
 using HttpCallbackType = WFX::Utils::MoveOnlyFunction<void(WFX::Http::HttpRequest&, WFX::Http::HttpResponse&)>;

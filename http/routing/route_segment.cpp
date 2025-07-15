@@ -1,5 +1,7 @@
 #include "route_segment.hpp"
 
+#include "utils/uuid/uuid.hpp"
+
 namespace WFX::Http {
 
 RouteSegment::RouteSegment(std::string_view key, std::unique_ptr<TrieNode> c)

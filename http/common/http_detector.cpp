@@ -1,5 +1,7 @@
 #include "http_detector.hpp"
 
+#include <unordered_map>
+
 namespace WFX::Http {
 
 // THIS IS GOING TO BE FUN AMIRITE

@@ -2,12 +2,8 @@
 #define WFX_HTTP_ROUTE_TRIE_HPP
 
 #include "route_segment.hpp"
-#include "utils/logger/logger.hpp"
 
 #include <string_view>
-#include <vector>
-#include <unordered_map>
-#include <memory>
 
 namespace WFX::Http {
 

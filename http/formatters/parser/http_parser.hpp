@@ -1,24 +1,14 @@
 #ifndef WFX_HTTP_PARSER_HPP
 #define WFX_HTTP_PARSER_HPP
 
-#include "config/config.hpp"
-
 #include "http/headers/http_headers.hpp"
 #include "http/constants/http_constants.hpp"
 #include "http/connection/http_connection.hpp"
 #include "http/request/http_request.hpp"
 
-#include "utils/backport/string.hpp"
-#include "utils/crypt/string.hpp"
-
-#include <memory>
-#include <string>
-#include <vector>
-#include <charconv>
+#include <string_view>
 
 namespace WFX::Http {
-
-using namespace WFX::Core; // For 'Config'
 
 // Being used as a namespace rn, fun
 class HttpParser final {

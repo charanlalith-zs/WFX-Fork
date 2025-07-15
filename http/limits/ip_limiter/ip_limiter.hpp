@@ -2,7 +2,6 @@
 #define WFX_HTTP_IP_LIMITER_HPP
 
 #include "../base_limiter.hpp"
-#include "config/config.hpp"
 #include "utils/hash_map/concurrent_hash_map.hpp"
 
 #include <string>
@@ -11,7 +10,6 @@
 
 namespace WFX::Http {
 
-using namespace WFX::Core;  // For 'Config'
 using namespace WFX::Utils; // For 'ConcurrentHashMap'
 
 class IpLimiter : BaseLimiter {

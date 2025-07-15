@@ -1,10 +1,13 @@
 #include "ip_limiter.hpp"
 
+#include "config/config.hpp"
+
 // We will use std::min instead of min macro
 #undef min
 
 namespace WFX::Http {
 
+using namespace WFX::Core;  // For 'Config'
 using namespace std::chrono;
 
 IpLimiter& IpLimiter::GetInstance()

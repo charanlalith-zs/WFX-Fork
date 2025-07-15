@@ -1,8 +1,13 @@
 #include "http_parser.hpp"
 
+#include "config/config.hpp"
+#include "utils/backport/string.hpp"
+#include "utils/crypt/string.hpp"
+
 namespace WFX::Http {
 
-using namespace WFX::Utils;
+using namespace WFX::Utils; // For 'I have no idea'
+using namespace WFX::Core; // For 'Config'
 
 HttpParseState HttpParser::Parse(ConnectionContext& ctx)
 {

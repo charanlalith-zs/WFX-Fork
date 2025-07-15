@@ -2,7 +2,6 @@
 #define WFX_HTTP_MIME_HPP
 
 #include <string_view>
-#include <unordered_map>
 
 namespace WFX::Http {
 

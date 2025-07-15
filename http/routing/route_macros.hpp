@@ -1,7 +1,7 @@
 #ifndef WFX_HTTP_ROUTE_MACROS_HPP
 #define WFX_HTTP_ROUTE_MACROS_HPP
 
-// Macros to tell compiler (when compiler user code into dll) that a specific-
+// Macros to tell compiler (when compiling user code into dll) that a specific-
 // -part of code is used and it must not be optimized out
 #if defined(_MSC_VER)
     #define WFX_USED __declspec(selectany)
