@@ -22,7 +22,7 @@ struct HttpResponse {
     BodyType        body;
 
     HttpResponse& Status(HttpStatus code);
-    HttpResponse& Set(const std::string& key, const std::string& value);
+    HttpResponse& Set(std::string&& key, std::string&& value);
     bool IsFileOperation() const;
 
     void SendText(const char* cstr);

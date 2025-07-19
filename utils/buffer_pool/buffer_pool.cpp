@@ -4,6 +4,10 @@
 #include <algorithm>
 #include <cstring>
 
+#if defined(_WIN32)
+    #include <malloc.h>
+#endif
+
 extern "C" {
     #include "third_party/tlsf/tlsf.h"
 }
@@ -13,13 +17,13 @@ namespace WFX::Utils {
 BufferPool::BufferPool(std::size_t initialSize, ResizeCallback resizeCb)
     : poolSize_(initialSize), resizeCallback_(resizeCb)
 {
-    void* memory = std::malloc(poolSize_);
+    void* memory = AlignedMalloc(poolSize_, tlsf_align_size());
     if(!memory)
         logger_.Fatal("[BufferPool]: Initial malloc failed");
 
     tlsfAllocator_ = tlsf_create_with_pool(memory, poolSize_);
     if(!tlsfAllocator_) {
-        std::free(memory);
+        AlignedFree(memory);
         logger_.Fatal("[BufferPool]: Failed to initialize TLSF with pool");
     }
 
@@ -41,7 +45,7 @@ BufferPool::~BufferPool()
             logger_.Info("[BufferPool]: Removed TLSF pool at ", reinterpret_cast<uintptr_t>(pool.memory));
         }
 
-        std::free(pool.memory);
+        AlignedFree(pool.memory);
         logger_.Info("[BufferPool]: Freed memory pool at ", reinterpret_cast<uintptr_t>(pool.memory));
     }
 
@@ -51,22 +55,42 @@ BufferPool::~BufferPool()
 
     if(!pools_.empty()) {
         void* memory = pools_[0].memory;
-        std::free(memory);
+        AlignedFree(memory);
         logger_.Info("[BufferPool]: Freed initial memory pool at ", reinterpret_cast<uintptr_t>(memory));
     }
 
     pools_.clear();
 }
 
+void* BufferPool::AlignedMalloc(std::size_t size, std::size_t alignment)
+{
+#if defined(_WIN32)
+    return _aligned_malloc(size, alignment);
+#else
+    void* ptr = nullptr;
+    if(posix_memalign(&ptr, alignment, size) != 0) return nullptr;
+    return ptr;
+#endif
+}
+
+void  BufferPool::AlignedFree(void* ptr)
+{
+#if defined(_WIN32)
+    _aligned_free(ptr);
+#else
+    free(ptr);
+#endif
+}
+
 void* BufferPool::AddPool(std::size_t size)
 {
-    void* memory = std::malloc(size);
+    void* memory = AlignedMalloc(size, tlsf_align_size());
     if(!memory)
         logger_.Fatal("[BufferPool]: malloc failed for ", size, " bytes");
 
     void* poolHandle = tlsf_add_pool(tlsfAllocator_, memory, size);
     if(!poolHandle) {
-        std::free(memory);
+        AlignedFree(memory);
         logger_.Fatal("[BufferPool]: Failed to add TLSF pool");
     }
 

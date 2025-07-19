@@ -1,5 +1,6 @@
 #include "engine.hpp"
 
+#include "include/http/response.hpp" // For 'Response'
 #include "http/routing/router.hpp"
 #include "shared/apis/master_api.hpp"
 
@@ -52,6 +53,9 @@ void Engine::HandleRequest(WFXSocket socket, ConnectionContext& ctx)
 {
     // This will be transmitted through all the layers (from here to middleware to user)
     HttpResponse res;
+    Response userRes{&res, WFX::Shared::GetHttpAPIV1()};
+
+    // Parse (The most obvious fucking comment i could write, i'm just sleepy rn cut me some slack)
     HttpParseState state = HttpParser::Parse(ctx);
 
     switch(state)
@@ -113,6 +117,20 @@ void Engine::HandleRequest(WFXSocket socket, ConnectionContext& ctx)
                 // Also the timeoutTick, DO NOT FORGET
                 ctx.parseState  = static_cast<std::uint8_t>(HttpParseState::PARSE_IDLE);
                 ctx.timeoutTick = connHandler_->GetCurrentTick();
+            }
+
+            // Get the callback for the route we got, if it doesn't exist, we display error
+            PathSegments segments;
+            auto callback = 
+                Router::GetInstance().MatchRoute(ctx.requestInfo->method, ctx.requestInfo->path, segments);
+
+            if(!callback)
+                res.SendText("404: Route not found :(");
+            else
+            {
+                // Move the path segments into request object
+                ctx.requestInfo->pathSegments = std::move(segments);
+                (*callback)(*ctx.requestInfo, userRes);
             }
 
             HandleResponse(socket, res, ctx);

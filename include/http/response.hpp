@@ -1,67 +1,51 @@
-#ifndef WFX_HTTP_USER_RESPONSE_HPP
-#define WFX_HTTP_USER_RESPONSE_HPP
+#ifndef WFX_INC_HTTP_USER_RESPONSE_HPP
+#define WFX_INC_HTTP_USER_RESPONSE_HPP
 
-#include "shared/apis/master_api.hpp"
+#include "shared/apis/http_api.hpp"
 
 // Forward declare HttpResponse
 namespace WFX::Http {
     struct HttpResponse;
 }
 
-// Declare the injected API table
-extern const WFX::Shared::MASTER_API_TABLE* __wfx_api;
-
-/* User side implementation of 'Response' class via __wfx_api */
+/* User side implementation of 'Response' class. Engine passes the API */
 class Response {
 public:
-    explicit Response(WFX::Http::HttpResponse* ptr)
-        : backend_(ptr)
+    Response(WFX::Http::HttpResponse* backend, const WFX::Shared::HTTP_API_TABLE* httpApi)
+        : backend_(backend), httpApi_(httpApi)
     {}
 
-    // Response& Status(int code)
-    // {
-    //     __wfx_api->SetStatus(backend_, code);
-    //     return *this;
-    // }
+    Response& Status(WFX::Http::HttpStatus code)
+    {
+        httpApi_->SetStatus(backend_, code);
+        return *this;
+    }
 
-    // Response& Set(std::string_view key, std::string_view value)
-    // {
-    //     __wfx_api->SetHeader(backend_, key.data(), value.data());
-    //     return *this;
-    // }
+    Response& Set(std::string key, std::string value)
+    {
+        httpApi_->SetHeader(backend_, std::move(key), std::move(value));
+        return *this;
+    }
 
-    // void SendText(const char* cstr)
-    // {
-    //     __wfx_api->SendTextCStr(backend_, cstr);
-    // }
+    // SendText overloads
+    void SendText(const char* cstr)      { httpApi_->SendTextCStr(backend_, cstr); }
+    void SendText(std::string_view view) { httpApi_->SendTextView(backend_, view); }
+    void SendText(std::string&& str)     { httpApi_->SendTextMove(backend_, std::move(str)); }
 
-    // void sendText(std::string_view view)
-    // {
-    //     __wfx_api->SendTextViewStr(backend_, view);
-    // }
+    // SendJson overloads
+    void SendJson(const Json& j)         { httpApi_->SendJsonConstRef(backend_, &j); }
+    void SendJson(Json&& j)              { httpApi_->SendJsonMove(backend_, std::move(j)); }
 
-    // void sendJson(const Json& j)
-    // {
-    //     __wfx_api->SendJsonConstRef(backend_, &j);
-    // }
+    // SendFile overloads
+    void SendFile(const char* path)      { httpApi_->SendFileCStr(backend_, path); }
+    void SendFile(std::string_view path) { httpApi_->SendFileView(backend_, path); }
+    void SendFile(std::string&& path)    { httpApi_->SendFileMove(backend_, std::move(path)); }
 
-    // void SendFile(const char* path)
-    // {
-    //     __wfx_api->SendFileCStr(backend_, path);
-    // }
-
-    // void SendFile(std::string_view path)
-    // {
-    //     __wfx_api->SendFileViewStr(backend_, path);
-    // }
-
-    // bool isFileOperation() const
-    // {
-    //     return __wfx_api->IsFileOperation(backend_);
-    // }
+    bool IsFileOperation() const         { return httpApi_->IsFileOperation(backend_); }
 
 private:
-    WFX::Http::HttpResponse* backend_;
+    WFX::Http::HttpResponse*           backend_;
+    const WFX::Shared::HTTP_API_TABLE* httpApi_;
 };
 
-#endif // WFX_HTTP_USER_RESPONSE_HPP
+#endif // WFX_INC_HTTP_USER_RESPONSE_HPP

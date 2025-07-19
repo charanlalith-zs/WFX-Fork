@@ -62,9 +62,9 @@ worker_connections = 4096    # Max simultaneous epoll-based worker connections
 #include <wfx/shared/utils/deferred_init_vector.hpp>
 #include <wfx/shared/utils/export_macro.hpp>
 
-// WARNING: DO NOT TOUCH THIS SYMBOL
+// WARNING: DO NOT MODIFY THIS SYMBOL
 // __wfx_api is reserved for WFX internal API injection
-// Modifying or redefining it will break route registration
+// Modifying or redefining it will break the interface between WFX and USER
 const WFX::Shared::MASTER_API_TABLE* __wfx_api = nullptr;
 
 // To prevent name mangling 
@@ -89,8 +89,6 @@ extern "C" {
             routes.shrink_to_fit();
 
             registered = true;
-
-            std::cout << "[API Entry]: Registered from user's side as well.\n";
         }
     }
 })");

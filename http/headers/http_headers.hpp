@@ -28,7 +28,7 @@ public:
 
     HttpHeaders();
 
-    void    SetHeader(const KeyType& key, const ValType& value);
+    void    SetHeader(KeyType key, ValType value);
     bool    HasHeader(const KeyType& key) const;
     ValType GetHeader(const KeyType& key) const;
     void    RemoveHeader(const KeyType& key);

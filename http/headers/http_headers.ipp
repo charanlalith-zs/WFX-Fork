@@ -32,9 +32,9 @@ HttpHeaders<K, V>::HttpHeaders()
 }
 
 template<typename K, typename V>
-void HttpHeaders<K, V>::SetHeader(const K& key, const V& value)
+void HttpHeaders<K, V>::SetHeader(K key, V value)
 {
-    headers_[key] = value;
+    headers_[std::move(key)] = std::move(value);
 }
 
 template<typename K, typename V>

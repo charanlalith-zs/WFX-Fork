@@ -25,6 +25,8 @@ public:
 
 private:
     void* AddPool(std::size_t size);
+    void* AlignedMalloc(std::size_t size, std::size_t alignment);
+    void  AlignedFree(void* ptr);
 
 private:
     struct Pool {

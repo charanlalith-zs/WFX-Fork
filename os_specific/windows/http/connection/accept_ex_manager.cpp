@@ -48,9 +48,21 @@ bool AcceptExManager::Initialize(WFXSocket listenSocket, HANDLE iocp)
 
     // We know exactly how much we using, so reserve it
     std::uint32_t maxAcceptSlots = config_.osSpecificConfig.maxAcceptSlots;
+    activeSlotsWordCount_        = (maxAcceptSlots + 63) / 64;
+
+    if(activeSlotsWordCount_ * 64 < maxAcceptSlots)
+        logger_.Fatal("[AcceptExManager]: activeSlotsBits_ insufficient for maxAcceptSlots (", 
+                    activeSlotsWordCount_ * 64, " bits < ", maxAcceptSlots, " slots)");
+
     contexts_.resize(maxAcceptSlots);
 
-    for(int i = 0; i < maxAcceptSlots; ++i) {
+    // Correct atomic initialization
+    activeSlotsBits_ = std::make_unique<std::atomic<uint64_t>[]>(activeSlotsWordCount_);
+    for(std::size_t i = 0; i < activeSlotsWordCount_; ++i)
+        activeSlotsBits_[i].store(0, std::memory_order_relaxed);
+
+    // Initialize AcceptEx slots
+    for(std::uint32_t i = 0; i < maxAcceptSlots; ++i) {
         if(!PostAcceptAtSlot(i)) {
             logger_.Error("[AcceptExManager]: Failed to initialize AcceptEx at slot ", i);
             return false;
@@ -67,7 +79,7 @@ void AcceptExManager::DeInitialize()
 
     for(int i = 0; i < maxAcceptSlots; ++i)
     {
-        if(!(activeSlotsBits_ & (1ULL << i)))
+        if(!IsSlotSet(i))
             continue;
 
         PerIoContext& ctx = contexts_[i];
@@ -81,8 +93,6 @@ void AcceptExManager::DeInitialize()
         ClearSlot(i);
     }
 
-    activeSlotsBits_ = 0;
-    
     logger_.Info("[AcceptExManager]: DeInitialized ", maxAcceptSlots, " AcceptEx slots");
 }
 
@@ -208,22 +218,33 @@ void AcceptExManager::HandleSocketOptions(SOCKET client)
     // setsockopt(client, SOL_SOCKET, SO_REUSEADDR, (char*)&one, sizeof(one));
 }
 
-inline void AcceptExManager::SetSlot(int index)
+void AcceptExManager::SetSlot(std::size_t slot)
 {
-    activeSlotsBits_ |= (1ULL << index);
+    std::size_t word = slot >> 6;
+    std::size_t bit  = slot & 63;
+    activeSlotsBits_[word].fetch_or(1ULL << bit, std::memory_order_relaxed);
 }
 
-inline void AcceptExManager::ClearSlot(int index)
+void AcceptExManager::ClearSlot(std::size_t slot)
 {
-    activeSlotsBits_ &= ~(1ULL << index);
+    std::size_t word = slot >> 6;
+    std::size_t bit  = slot & 63;
+    activeSlotsBits_[word].fetch_and(~(1ULL << bit), std::memory_order_relaxed);
 }
 
-int AcceptExManager::GetSlotFromPointer(PerIoContext* ctx)
+bool AcceptExManager::IsSlotSet(std::size_t slot)
+{
+    std::size_t word = slot >> 6;
+    std::size_t bit  = slot & 63;
+    return (activeSlotsBits_[word].load(std::memory_order_relaxed) & (1ULL << bit)) != 0;
+}
+
+std::size_t AcceptExManager::GetSlotFromPointer(PerIoContext* ctx)
 {
     // Current Address - Base Address gives us the index based on how pointer arithmetic works. Pretty cool
-    return static_cast<int>(
-        (reinterpret_cast<uintptr_t>(ctx) - reinterpret_cast<uintptr_t>(&contexts_[0])) / sizeof(PerIoContext)
-    );
+    return ((reinterpret_cast<uintptr_t>(ctx) - reinterpret_cast<uintptr_t>(&contexts_[0]))
+                /
+            sizeof(PerIoContext));
 }
 
 bool AcceptExManager::AssociateWithIOCP(WFXSocket sock)
@@ -231,33 +252,43 @@ bool AcceptExManager::AssociateWithIOCP(WFXSocket sock)
     return CreateIoCompletionPort((HANDLE)sock, iocp_, (ULONG_PTR)sock, 0);
 }
 
-void AcceptExManager::RepostAcceptAtSlot(int slot)
+void AcceptExManager::RepostAcceptAtSlot(std::size_t slot)
 {
     ClearSlot(slot);
 
     // Try original slot — fast path
     if(PostAcceptAtSlot(slot)) return;
 
-    // Calculate fallback from available slots
-    uint64_t available = ~activeSlotsBits_;
-    unsigned long fallbackIdx;
-    bool hasFree;
+    // Fallback scan across bitset
+    std::size_t fallbackSlot = static_cast<std::size_t>(-1);
+    for(std::size_t word = 0; word < activeSlotsWordCount_; ++word) {
+        uint64_t available = ~activeSlotsBits_[word].load(std::memory_order_relaxed);
+        if(available == 0) continue;
 
 #if defined(_MSC_VER)
-    hasFree = _BitScanForward64(&fallbackIdx, available);
+        unsigned long bitIndex;
+        if(_BitScanForward64(&bitIndex, available)) {
+            fallbackSlot = word * 64 + bitIndex;
+            break;
+        }
 #else
-    hasFree = (available != 0);
-    fallbackIdx = __builtin_ctzll(available);
+        int bitIndex = __builtin_ffsll(available); // 1-based index
+        if(bitIndex != 0) {
+            fallbackSlot = word * 64 + (bitIndex - 1);
+            break;
+        }
 #endif
+    }
 
-    // Branchless fallback — only log if this also fails
-    bool success = hasFree && PostAcceptAtSlot(static_cast<int>(fallbackIdx));
+    // Only log if fallback also fails
+    bool success = (fallbackSlot != static_cast<std::size_t>(-1)) &&
+                   PostAcceptAtSlot(fallbackSlot);
 
     if(!success)
         logger_.Error("AcceptExManager: All AcceptEx slots exhausted — recovery failed.");
 }
 
-bool AcceptExManager::PostAcceptAtSlot(int slot)
+bool AcceptExManager::PostAcceptAtSlot(std::size_t slot)
 {
     PerIoContext& ctx = contexts_[slot];
     ctx.overlapped    = { 0 };

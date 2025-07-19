@@ -23,9 +23,9 @@ HttpResponse& HttpResponse::Status(HttpStatus code)
     return *this;
 }
 
-HttpResponse& HttpResponse::Set(const std::string& key, const std::string& value)
+HttpResponse& HttpResponse::Set(std::string&& key, std::string&& value)
 {
-    headers.SetHeader(key, value);
+    headers.SetHeader(std::move(key), std::move(value));
     return *this;
 }
 

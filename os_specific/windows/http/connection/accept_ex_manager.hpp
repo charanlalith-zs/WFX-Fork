@@ -6,7 +6,6 @@
 #include "config/config.hpp"
 #include "http/connection/http_connection.hpp"
 #include "http/limits/ip_limiter/ip_limiter.hpp"
-#include "utils/fixed_pool/fixed_pool.hpp"
 #include "utils/logger/logger.hpp"
 
 #include <ws2ipdef.h>
@@ -79,12 +78,13 @@ public:
     void HandleSocketOptions(SOCKET);
 
 private:
-    inline void SetSlot(int index);
-    inline void ClearSlot(int index);
-    int         GetSlotFromPointer(PerIoContext* ctx);
+    void        SetSlot(std::size_t slot);
+    void        ClearSlot(std::size_t slot);
+    bool        IsSlotSet(std::size_t slot);
+    std::size_t GetSlotFromPointer(PerIoContext* ctx);
     bool        AssociateWithIOCP(WFXSocket sock);
-    void        RepostAcceptAtSlot(int slot);
-    bool        PostAcceptAtSlot(int slot);
+    void        RepostAcceptAtSlot(std::size_t slot);
+    bool        PostAcceptAtSlot(std::size_t slot);
 
 private:
     // IMP
@@ -99,7 +99,9 @@ private:
     Config&     config_      = Config::GetInstance();
 
     std::vector<PerIoContext> contexts_;
-    std::uint64_t             activeSlotsBits_ = 0;
+    
+    std::unique_ptr<std::atomic<std::size_t>[]> activeSlotsBits_;
+    std::size_t activeSlotsWordCount_ = 0;
 };
 
 } // namespace WFX::OSSpecific
