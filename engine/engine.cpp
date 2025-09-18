@@ -1,6 +1,7 @@
 #include "engine.hpp"
 
-#include "include/http/response.hpp" // For 'Response'
+#include "include/http/response.hpp"
+#include "http/common/http_error_msgs.hpp"
 #include "http/formatters/parser/http_parser.hpp"
 #include "http/formatters/serializer/http_serializer.hpp"
 #include "http/routing/router.hpp"
@@ -134,27 +135,13 @@ void Engine::HandleRequest(ConnectionContext* ctx)
 
         case HttpParseState::PARSE_ERROR:
             ctx->SetConnectionState(ConnectionState::CONNECTION_CLOSE);
-            connHandler_->Write(ctx,
-                "HTTP/1.1 400 Bad Request\r\n"
-                "Connection: close\r\n"
-                "Content-Length: 11\r\n"
-                "Content-Type: text/plain\r\n"
-                "\r\n"
-                "Bad Request"
-            );
+            connHandler_->Write(ctx, badRequest);
             return;
 
         case HttpParseState::PARSE_STREAMING_BODY:
         default:
             ctx->SetConnectionState(ConnectionState::CONNECTION_CLOSE);
-            connHandler_->Write(ctx,
-                "HTTP/1.1 501 Not Implemented\r\n"
-                "Connection: close\r\n"
-                "Content-Length: 15\r\n"
-                "Content-Type: text/plain\r\n"
-                "\r\n"
-                "Not Implemented"
-            );
+            connHandler_->Write(ctx, notImplemented);
             return;
     }
 }

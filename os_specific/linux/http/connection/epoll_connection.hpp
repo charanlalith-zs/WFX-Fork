@@ -1,5 +1,5 @@
-#ifndef WFX_LINUX_IO_URING_CONNECTION_HPP
-#define WFX_LINUX_IO_URING_CONNECTION_HPP
+#ifndef WFX_LINUX_EPOLL_CONNECTION_HPP
+#define WFX_LINUX_EPOLL_CONNECTION_HPP
 
 #include "config/config.hpp"
 #include "http/connection/http_connection.hpp"
@@ -7,7 +7,7 @@
 #include "os_specific/linux/utils/file_cache/file_cache.hpp"
 #include "utils/buffer_pool/buffer_pool.hpp"
 
-#include <liburing.h>
+#include <sys/epoll.h>
 #include <atomic>
 #include <cstring>
 
@@ -17,15 +17,10 @@ using namespace WFX::Http;  // For 'HttpConnectionHandler', 'ReceiveCallback', '
 using namespace WFX::Utils; // For 'Logger', 'RWBuffer', ...
 using namespace WFX::Core;  // For 'Config'
 
-struct AcceptSlot : public ConnectionTag {
-    socklen_t        addrLen = 0;
-    sockaddr_storage addr    = { 0 };
-};
-
-class IoUringConnectionHandler : public HttpConnectionHandler {
+class EpollConnectionHandler : public HttpConnectionHandler {
 public:
-    IoUringConnectionHandler() = default;
-    ~IoUringConnectionHandler();
+    EpollConnectionHandler() = default;
+    ~EpollConnectionHandler();
 
 public: // Initializing
     void Initialize(const std::string& host, int port) override;
@@ -45,21 +40,13 @@ public: // Main Functions
 private: // Helper Functions
     int                AllocSlot(std::uint64_t* bitmap, int numWords, int maxSlots);
     void               FreeSlot(std::uint64_t* bitmap, int idx);
-    
     ConnectionContext* GetConnection();
     void               ReleaseConnection(ConnectionContext* ctx);
-    AcceptSlot*        GetAccept();
-    void               ReleaseAccept(AcceptSlot* slot);
-
     void               SetNonBlocking(int fd);
     bool               EnsureFileReady(ConnectionContext* ctx, std::string_view path);
+    bool               EnsureReadReady(ConnectionContext* ctx);
     int                ResolveHostToIpv4(const char* host, in_addr* outAddr);
-
-    void               AddAccept();
-    void               AddRecv(ConnectionContext* ctx);
-    void               AddSend(ConnectionContext* ctx, std::string_view msg);
-    void               AddFile(ConnectionContext* ctx);
-    void               SubmitBatch();
+    void               Receive(ConnectionContext* ctx);
 
 private:
     // Misc
@@ -72,23 +59,20 @@ private:
     FileCache         fileCache_{config_.osSpecificConfig.fileCacheSize};
 
 private:
-    // IoUring
-    int      listenFd_ = -1;
-    int      sqeBatch_ = 0;
-    io_uring ring_     = { 0 };
+    // Epoll
+    int listenFd_ = -1;
+    int epollFd_  = -1;
+
+    constexpr static std::uint32_t MAX_EPOLL_EVENTS = 1024;
+    epoll_event events[MAX_EPOLL_EVENTS] = { 0 };
 
 private:
     // Connection Context
-    std::unique_ptr<ConnectionContext[]> connections_;
-    std::unique_ptr<std::uint64_t[]>     connBitmap_;
-    // Connection Accept
-    std::unique_ptr<AcceptSlot[]>        acceptSlots_;
-    std::unique_ptr<std::uint64_t[]>     acceptBitmap_;
-    // Derived size
-    std::uint32_t connWords_      = 0;
-    std::uint32_t acceptWords_    = 0;
+    std::unique_ptr<ConnectionContext[]> connections_ = nullptr;
+    std::unique_ptr<std::uint64_t[]>     connBitmap_  = nullptr;
+    std::uint32_t                        connWords_   = 0;
 };
 
 } // namespace WFX::OSSpecific
 
-#endif // WFX_LINUX_IO_URING_CONNECTION_HPP
+#endif // WFX_LINUX_EPOLL_CONNECTION_HPP

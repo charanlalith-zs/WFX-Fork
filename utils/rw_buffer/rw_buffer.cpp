@@ -82,6 +82,20 @@ void RWBuffer::ResetBuffer()
     readBuffer_ = nullptr;
 }
 
+void RWBuffer::ClearBuffer()
+{
+    auto* readMeta  = GetReadMeta();
+    auto* writeMeta = GetWriteMeta();
+
+    if(readMeta)
+        readMeta->dataLength = 0;
+
+    if(writeMeta) {
+        writeMeta->dataLength    = 0;
+        writeMeta->writtenLength = 0;
+    }
+}
+
 // vvv Getter Functions vvv
 char* RWBuffer::GetWriteData() const noexcept
 {

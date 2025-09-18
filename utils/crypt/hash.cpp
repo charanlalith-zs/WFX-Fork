@@ -3,6 +3,19 @@
 #include "utils/logger/logger.hpp"
 #include <cstring>
 
+// Some OS level tools for randomization
+#if defined(_WIN32)
+    #define WIN32_LEAN_AND_MEAN
+    #include <Windows.h>
+    #include <bcrypt.h>
+    #pragma comment(lib, "bcrypt.lib")
+#else
+    #include <fcntl.h>
+    #include <unistd.h>
+    #include <sys/random.h>
+    #include <errno.h>
+#endif
+
 namespace WFX::Utils {
 
 // vvv HASHERS vvv
@@ -135,17 +148,40 @@ bool RandomPool::RefillBytes()
     if(BCryptGenRandom(nullptr, randomPool_, static_cast<ULONG>(BUFFER_SIZE), BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0)
         return false;
 #else
-    ssize_t readBytes = 0;
-#if defined(SYS_getrandom)
-    readBytes = getrandom(randomPool_, BUFFER_SIZE, 0);
-#else
-    int fd = open("/dev/urandom", O_RDONLY);
-    if(fd < 0) return false;
-    readBytes = read(fd, randomPool_, BUFFER_SIZE);
-    close(fd);
-#endif // defined(SYS_getrandom)
-    if(readBytes != static_cast<ssize_t>(BUFFER_SIZE))
-        return false;
+    ssize_t totalRead = 0;
+
+    while(totalRead < BUFFER_SIZE) {
+        ssize_t n = getrandom(randomPool_ + totalRead, BUFFER_SIZE - totalRead, 0);
+        if(n < 0) {
+            if(errno == ENOSYS) {
+                // Fallback to /dev/urandom
+                int fd = open("/dev/urandom", O_RDONLY);
+                if(fd < 0)
+                    return false;
+
+                ssize_t r;
+                ssize_t readTotal = 0;
+                while(readTotal < BUFFER_SIZE) {
+                    r = read(fd, randomPool_ + readTotal, BUFFER_SIZE - readTotal);
+                    if(r <= 0) {
+                        close(fd);
+                        return false;
+                    }
+                    readTotal += r;
+                }
+                close(fd);
+                break;
+            }
+            // Interrupted syscall
+            else if(errno == EINTR)
+                continue;
+            
+            else
+                return false;
+        }
+        else
+            totalRead += n;
+    }
 #endif
     cursor_.store(0, std::memory_order_release);
     return true;

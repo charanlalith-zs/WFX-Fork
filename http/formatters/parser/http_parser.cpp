@@ -28,7 +28,7 @@ HttpParseState HttpParser::Parse(ConnectionContext* ctx)
 
     // Ensure requestInfo is allocated. If not, lazy initialize it
     if(!ctx->requestInfo)
-        ctx->requestInfo = std::make_unique<HttpRequest>();
+        ctx->requestInfo = new HttpRequest{};
 
     HttpRequest& request = *ctx->requestInfo;
 

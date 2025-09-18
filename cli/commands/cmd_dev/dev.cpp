@@ -48,7 +48,8 @@ LONG WINAPI ExceptionFilter(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #else
-#include <csignal>
+#include <wait.h>
+#include <signal.h>
 
 static ::std::vector<pid_t> workerPids;
 static ::WFX::Core::Engine* globalEnginePtr = nullptr;
@@ -113,8 +114,8 @@ int RunDevServer(const ::std::string& host, int port, bool noCache)
     config.LoadCoreSettings("wfx.toml");
     config.LoadToolchainSettings("toolchain.toml");
 
-    std::signal(SIGINT, HandleMasterSignal);
-    std::signal(SIGTERM, SIG_IGN);
+    signal(SIGINT, HandleMasterSignal);
+    signal(SIGTERM, SIG_IGN);
 
     logger.Info("[WFX-Master]: Dev server running at http://", host, ':', port);
     logger.Info("[WFX-Master]: Press Ctrl+C to stop");
@@ -134,8 +135,9 @@ int RunDevServer(const ::std::string& host, int port, bool noCache)
             WFX::Core::Engine engine{noCache};
             globalEnginePtr = &engine;
 
-            std::signal(SIGTERM, HandleWorkerSignal);
-            std::signal(SIGINT, SIG_IGN);
+            signal(SIGTERM, HandleWorkerSignal);
+            signal(SIGINT, SIG_IGN);  // SigTerm will kill it, SigInt handled by master
+            signal(SIGPIPE, SIG_IGN); // We will handle it internally
 
             PinWorkerToCPU(i);
 

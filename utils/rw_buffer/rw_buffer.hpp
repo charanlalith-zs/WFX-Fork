@@ -44,6 +44,7 @@ public: // Init / Reset
     bool InitReadBuffer(BufferPool& pool, std::uint32_t size);
 
     void ResetBuffer();
+    void ClearBuffer();
 
 public: // Getter functions
     char*          GetWriteData()        const noexcept;
@@ -58,12 +59,12 @@ public: // Getter functions
 public: // Read buffer management
     bool        GrowReadBuffer(std::uint32_t defaultSize, std::uint32_t maxSize);
     ValidRegion GetWritableReadRegion()       const noexcept;
-    ValidRegion GetWritableWriteRegion()      const noexcept;
     void        AdvanceReadLength(std::uint32_t n)  noexcept;
-    void        AdvanceWriteLength(std::uint32_t n) noexcept;
-
+    
 public: // Write buffer management
-    bool AppendData(const char* data, std::uint32_t size);
+    bool        AppendData(const char* data, std::uint32_t size);
+    void        AdvanceWriteLength(std::uint32_t n) noexcept;
+    ValidRegion GetWritableWriteRegion()      const noexcept;
 
 private:
     char* writeBuffer_ = nullptr;

@@ -10,17 +10,6 @@
 #include <mutex>
 #include <atomic>
 
-// Some OS level tools for randomization
-#if defined(_WIN32)
-    #define WIN32_LEAN_AND_MEAN
-    #include <Windows.h>
-    #include <bcrypt.h>
-    #pragma comment(lib, "bcrypt.lib")
-#else
-    #include <fcntl.h>
-    #include <unistd.h>
-#endif
-
 // Helper macros
 #define ROTL64(x, b) ((x << b) | (x >> (64 - b)))
 

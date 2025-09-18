@@ -59,14 +59,44 @@ const char* WFXIpAddress::GetIpType() const
 void ConnectionContext::ResetContext()
 {
     rwBuffer.ResetBuffer();
-    requestInfo.reset();
     
+    if(requestInfo) {
+        delete requestInfo;
+        requestInfo = nullptr;
+    }
+
+    if(fileInfo) {
+        delete fileInfo;
+        fileInfo = nullptr;
+    }
+    
+    connectionState    = 0;
+    isFileOperation    = 0;
     connInfo           = WFXIpAddress{};
     expectedBodyLength = 0;
     eventType          = EventType::EVENT_ACCEPT;
     parseState         = 0;
     timeoutTick        = 0;
     trackBytes         = 0;
+}
+
+void ConnectionContext::ClearContext()
+{
+    rwBuffer.ClearBuffer();
+
+    if(requestInfo)
+        requestInfo->ClearInfo();
+    
+    if(fileInfo)
+        *fileInfo = FileInfo{};
+
+    isFileOperation    = 0;
+    connInfo           = WFXIpAddress{};
+    expectedBodyLength = 0;
+    eventType          = EventType::EVENT_ACCEPT;
+    trackBytes         = 0;
+    // timeoutTick        = 0;
+    // parseState         = 0;
 }
 
 void ConnectionContext::SetParseState(HttpParseState newState)

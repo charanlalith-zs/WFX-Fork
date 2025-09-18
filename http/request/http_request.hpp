@@ -17,6 +17,13 @@ struct HttpRequest {
     PathSegments     pathSegments;
     std::string_view path;
     std::string_view body;
+
+public: // Helper functions
+    void ClearInfo()
+    {
+        headers.Clear();
+        pathSegments.clear();
+    }
 };
 
 } // namespace WFX::Http

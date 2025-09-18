@@ -76,37 +76,53 @@ enum class ConnectionState : std::uint8_t {
 struct ConnectionContext;
 
 using WFX::Utils::MoveOnlyFunction;
-
 using ReceiveCallback            = MoveOnlyFunction<void(ConnectionContext*)>;
 using AcceptedConnectionCallback = MoveOnlyFunction<void()>;
-using HttpRequestPtr             = std::unique_ptr<HttpRequest>;
 
 // Honestly, while it would've been easier to include tick_scheduler.hpp for TickScheduler::TickType
 // Eh, idk cluttering this file just for a type, i'm just going to redefine it here for no absolute reason
 using HttpTickType = std::uint16_t;
 
-struct ConnectionContext {
-    // First 8 bytes, eventType must strictly be at offset of 0
-    EventType eventType = EventType::EVENT_ACCEPT;        // 1 byte
+struct FileInfo {
+#if defined(_WIN32)
+    void* handle;        // HANDLE is pointer-sized
+    uint64_t fileSize;   // 64-bit for large files
+    uint64_t offset;     // current send offset
+#else
+    int   fd       = -1;     // Linux file descriptor
+    off_t fileSize = 0;      // File size
+    off_t offset   = 0;      // current send offset
+#endif
+};
 
+// Simply to assert that eventType must exist in anything related to connection
+// And must be the first member as well (offset == 0)
+struct ConnectionTag {
+    EventType eventType = EventType::EVENT_ACCEPT;       // 1 byte
+};
+
+struct ConnectionContext : public ConnectionTag {
     struct {
-        std::uint8_t parseState      : 4; // 0–15 (Enough for HttpParseState)
-        std::uint8_t connectionState : 4; // 0–15 (Enough for ConnectionState)
+        std::uint8_t parseState      : 4;                // --
+        std::uint8_t connectionState : 3;                //  |
+        std::uint8_t isFileOperation : 1;                //  v
     };                                                   // 1 byte
 
     std::uint16_t timeoutTick = 0;                       // 2 bytes
     std::uint32_t trackBytes  = 0;                       // 4 bytes
-
+    
     // 16-byte buffer
     WFX::Utils::RWBuffer rwBuffer;
-
-    HttpRequestPtr requestInfo;                        // 8 bytes
-    WFXSocket      socket;                             // 4 bytes
+    
+    HttpRequest*   requestInfo        = nullptr;       // 8 bytes
+    WFXSocket      socket             = -1;            // 4 bytes
     std::uint32_t  expectedBodyLength = 0;             // 4 bytes
+    FileInfo*      fileInfo           = nullptr;       // 8 bytes
     WFXIpAddress   connInfo;                           // 20 bytes
 
 public: // Helper functions
     void ResetContext();
+    void ClearContext();
 
     void SetParseState(HttpParseState newState);
     void SetConnectionState(ConnectionState newState);
@@ -114,7 +130,6 @@ public: // Helper functions
     HttpParseState  GetParseState()      const;
     ConnectionState GetConnectionState() const;
 };
-static_assert(offsetof(ConnectionContext, eventType) == 0, "[ConnectionContext] 'eventType' must strictly be at an offset of 0.");
 static_assert(sizeof(ConnectionContext) <= 80, "ConnectionContext must STRICTLY be less than or equal to 80 bytes.");
 
 // Abstraction for Windows and Linux impl

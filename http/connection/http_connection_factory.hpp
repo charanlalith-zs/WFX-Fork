@@ -8,7 +8,11 @@
 #ifdef _WIN32
     #include "os_specific/windows/http/connection/iocp_connection.hpp"
 #else
-    #include "os_specific/linux/http/connection/io_uring_connection.hpp"
+    #ifdef WFX_LINUX_USE_IO_URING
+        #include "os_specific/linux/http/connection/io_uring_connection.hpp"
+    #else
+        #include "os_specific/linux/http/connection/epoll_connection.hpp"
+    #endif
 #endif
 
 #include <memory>
@@ -20,7 +24,11 @@ namespace WFX::Http {
     #ifdef _WIN32
         return std::make_unique<WFX::OSSpecific::IocpConnectionHandler>();
     #else
-        return std::make_unique<WFX::OSSpecific::IoUringConnectionHandler>();
+        #ifdef WFX_LINUX_USE_IO_URING
+            return std::make_unique<WFX::OSSpecific::IoUringConnectionHandler>();
+        #else
+            return std::make_unique<WFX::OSSpecific::EpollConnectionHandler>();
+        #endif
     #endif
     }
 }

@@ -64,6 +64,12 @@ void Config::LoadCoreSettings(std::string_view path) {
                          osSpecificConfig.callbackThreadCount, defaultUser, threadCount);
     #else
         ExtractValue(tbl, logger, "Linux", "worker_processes", osSpecificConfig.workerProcesses);
+        ExtractValue(tbl, logger, "Linux", "accept_slots",     osSpecificConfig.acceptSlots);
+        ExtractValue(tbl, logger, "Linux", "backlog",          osSpecificConfig.backlog);
+        ExtractValue(tbl, logger, "Linux", "queue_depth",      osSpecificConfig.queueDepth);
+        ExtractValue(tbl, logger, "Linux", "batch_size",       osSpecificConfig.batchSize);
+        ExtractValue(tbl, logger, "Linux", "file_cache_size",  osSpecificConfig.fileCacheSize);
+        ExtractValue(tbl, logger, "Linux", "file_chunk_size",  osSpecificConfig.fileChunkSize);
     #endif
     }
     catch(const toml::parse_error& err) {
