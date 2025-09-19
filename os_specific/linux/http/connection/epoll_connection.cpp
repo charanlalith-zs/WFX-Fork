@@ -136,10 +136,8 @@ void EpollConnectionHandler::Write(ConnectionContext * ctx, std::string_view msg
                 PollAgain(ctx, EventType::EVENT_SEND);
             
             // Fatal error
-            else {
-                logger_.Warn("[Epoll]: send() failed");
+            else
                 goto __CleanupOrRearm;
-            }
         }
 
         return;
@@ -267,7 +265,6 @@ void EpollConnectionHandler::Run()
                 }
                 
                 if(ev & EPOLLOUT) {
-                    logger_.Info("[Epoll-Debug]: I am here: ", (int)ctx->eventType);
                     if(ctx->eventType == EventType::EVENT_SEND_FILE)
                         SendFile(ctx);
                     else if(ctx->eventType == EventType::EVENT_SEND)
@@ -490,7 +487,6 @@ void EpollConnectionHandler::SendFile(ConnectionContext *ctx)
                 }
                 // Fatal error
                 else {
-                    logger_.Warn("[Epoll]: sendfile() failed (errno=%d)", errno);
                     Close(ctx);
                     return;
                 }

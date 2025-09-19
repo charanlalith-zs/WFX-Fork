@@ -7,13 +7,11 @@ wfx doctor	Check requirements for WFX
 To implement:
 1. Auto user code compiling into dll (Done)
 2. Middleware (Done) 
-3. Hot Reload
-4. HTML Templating (SSR)
-5. DB support
+3. Per route middleware
+4. Hot Reload
+5. HTML Templating (SSR)
+6. DB support
 
 To Fix:
-1. Latency issues (Need more Requests per second to be handled) (Done, Sort of fixed)
-2. Crashing issue. Anything using 'ctx' inside of engine is bound to crash wfx, idk why
-    - Proper context erasing and handling
-3. Cache files < 4KB, don't use TransmitFile on every single file
-4. Logic for handling 'Write' and 'WriteFile' calls + Proper flushing of write buffers in engine.cpp
+1. Cache files < 4KB, don't use TransmitFile / sendfile on every single file
+2. Batch syscalls (for receving and sending data) instead of spamming them every request

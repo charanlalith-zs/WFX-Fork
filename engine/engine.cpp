@@ -56,10 +56,6 @@ void Engine::HandleRequest(ConnectionContext* ctx)
 
     HttpParseState state = HttpParser::Parse(ctx);
 
-    // Version is important for Serializer to properly create a response
-    // HTTP/1.1 and HTTP/2 have different formats dawg
-    res.version = ctx->requestInfo->version;
-
     switch(state)
     {        
         case HttpParseState::PARSE_INCOMPLETE_HEADERS:
@@ -82,6 +78,10 @@ void Engine::HandleRequest(ConnectionContext* ctx)
 
         case HttpParseState::PARSE_SUCCESS:
         {
+            // Version is important for Serializer to properly create a response
+            // HTTP/1.1 and HTTP/2 have different formats dawg
+            res.version = ctx->requestInfo->version;
+
             auto& reqInfo     = ctx->requestInfo;
             auto  conn        = reqInfo->headers.GetHeader("Connection");
             bool  shouldClose = true;

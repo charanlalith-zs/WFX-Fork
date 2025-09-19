@@ -226,6 +226,7 @@ int RunDevServer(const ::std::string& host, int port, bool noCache)
             signal(SIGTERM, HandleWorkerSignal);
             signal(SIGINT, SIG_IGN);  // SigTerm will kill it, SigInt handled by master
             signal(SIGPIPE, SIG_IGN); // We will handle it internally
+            signal(SIGHUP, SIG_IGN);  // Terminals should not kill workers
 
             PinWorkerToCPU(i);
 

@@ -84,6 +84,14 @@ static constexpr const char* serviceUnavailable =
     "\r\n"
     "Service Unavailable";
 
+static constexpr const char* tooManyRequests =
+    "HTTP/1.1 429 Too Many Requests\r\n"
+    "Content-Type: text/plain; charset=UTF-8\r\n"
+    "Connection: close\r\n"
+    "Content-Length: 18\r\n"
+    "\r\n"
+    "Too Many Requests";
+
 } // namespace WFX::Http
 
 #endif // WFX_HTTP_ERROR_MESSAGES_HPP
