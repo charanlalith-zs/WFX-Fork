@@ -16,34 +16,15 @@
 
 namespace WFX::Core {
 
-Engine::Engine(bool noCache)
+Engine::Engine(const char* dllPath)
     : connHandler_(CreateConnectionHandler())
 {
-    // This will be used in both compiling and injecting of dll
-    const std::string dllDir  = config_.projectConfig.projectName + "/build/dlls/";
-#if defined(_WIN32)
-    const std::string dllPath = dllDir + "user_entry.dll";
-#else
-    const std::string dllPath = dllDir + "user_entry.so";
-#endif
-
-    const char* dllPathCStr = dllPath.c_str();
-    const char* dllDirCStr  = dllDir.c_str();
-
     // Handle the public/ directory routing automatically
     // To serve stuff like css, js and so on
     HandlePublicRoute();
 
-    // Let's do this cuz its getting annoying for me, if flag isn't there, we compile it
-    auto& fs = FileSystem::GetFileSystem();
-    
-    if(noCache || !fs.FileExists(dllPathCStr))
-        HandleUserSrcCompilation(dllDirCStr, dllPathCStr);
-    else
-        logger_.Info("[Engine]: File already exists, skipping user code compilation");
-
     // Load user's DLL file which we compiled / is cached
-    HandleUserDLLInjection(dllPathCStr);
+    HandleUserDLLInjection(dllPath);
 
     // Now that user code is available to us, load middleware in proper order
     HandleMiddlewareLoading();
@@ -193,77 +174,6 @@ void Engine::HandlePublicRoute()
                 .SendFile(std::move(fullRoute));
         }
     );
-}
-
-void Engine::HandleUserSrcCompilation(const char* dllDir, const char* dllPath)
-{
-    const std::string& projName  = config_.projectConfig.projectName;
-    const auto&        toolchain = config_.toolchainConfig;
-    const std::string  srcDir    = projName + "/src";
-    const std::string  objDir    = projName + "/build/objs";
-
-    auto& fs   = FileSystem::GetFileSystem();
-    auto& proc = ProcessUtils::GetInstance();
-
-    if(!fs.DirectoryExists(srcDir.c_str()))
-        logger_.Fatal("[Engine]: Failed to locate 'src' directory inside of '", projName, "/src'.");
-
-    if(!fs.CreateDirectory(objDir))
-        logger_.Fatal("[Engine]: Failed to create obj dir: ", objDir, '.');
-
-    if(!fs.CreateDirectory(dllDir))
-        logger_.Fatal("[Engine]: Failed to create dll dir: ", dllDir, '.');
-
-    // Prebuild fixed portions of compiler and linker commands
-    const std::string compilerBase = toolchain.ccmd + " " + toolchain.cargs + " ";
-    const std::string objPrefix    = toolchain.objFlag + "\"";
-    const std::string dllLinkTail  = toolchain.largs + " " + toolchain.dllFlag + "\"" + dllPath + '"';
-
-    std::string linkCmd = toolchain.lcmd + " ";
-
-    // Recurse through src/ files
-    fs.ListDirectory(srcDir, true, [&](const std::string& cppFile) {
-        if(!EndsWith(cppFile.c_str(), ".cpp") &&
-            !EndsWith(cppFile.c_str(), ".cxx") &&
-            !EndsWith(cppFile.c_str(), ".cc")) return;
-
-        logger_.Info("[Engine]: Compiling src/ file: ", cppFile);
-
-        // Construct relative path
-        std::string relPath = cppFile.substr(srcDir.size());
-        if(!relPath.empty() && (relPath[0] == '/' || relPath[0] == '\\'))
-            relPath.erase(0, 1);
-
-        // Replace .cpp with .obj
-        std::string objFile = objDir + "/" + relPath;
-        objFile.replace(objFile.size() - 4, 4, ".obj");
-
-        // Ensure obj subdir exists
-        std::size_t slash = objFile.find_last_of("/\\");
-        if(slash != std::string::npos) {
-            std::string dir = objFile.substr(0, slash);
-            if(!fs.DirectoryExists(dir.c_str()) && !fs.CreateDirectory(dir))
-                logger_.Fatal("[Engine]: Failed to create obj subdirectory: ", dir);
-        }
-
-        // Construct compile command
-        std::string compileCmd = compilerBase + "\"" + cppFile + "\" " + objPrefix + objFile + "\"";
-        auto result = proc.RunProcess(compileCmd);
-        if(result.exitCode < 0)
-            logger_.Fatal("[Engine]: Compilation failed for: ", cppFile,
-                ". Engine code: ", result.exitCode, ", OS code: ", result.osCode);
-
-        // Append obj to link command
-        linkCmd += "\"" + objFile + "\" ";
-    });
-
-    // Final linking
-    linkCmd += dllLinkTail;
-    auto linkResult = proc.RunProcess(linkCmd);
-    if(linkResult.exitCode < 0)
-        logger_.Fatal("[Engine]: Linking failed. DLL not created. Error: ", linkResult.osCode);
-
-    logger_.Info("[Engine]: User project successfully compiled to ", dllDir);
 }
 
 void Engine::HandleUserDLLInjection(const char* dllPath)

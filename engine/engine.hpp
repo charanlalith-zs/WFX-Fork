@@ -14,7 +14,7 @@ using namespace WFX::Http;  // For 'HttpConnectionHandler', 'HttpParser', 'HttpR
 
 class Engine {
 public:
-    Engine(bool noCache);
+    Engine(const char* dllPath);
     void Listen(const std::string& host, int port);
     void Stop();
 
@@ -24,7 +24,6 @@ private:
 
 private:
     void HandlePublicRoute();
-    void HandleUserSrcCompilation(const char* dllDir, const char* dllPath);
     void HandleUserDLLInjection(const char* dllDir);
     void HandleMiddlewareLoading();
 
