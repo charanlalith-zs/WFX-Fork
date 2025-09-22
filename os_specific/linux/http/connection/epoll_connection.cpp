@@ -5,6 +5,7 @@
 #include "http/common/http_error_msgs.hpp"
 #include <sys/sendfile.h>
 #include <sys/socket.h>
+#include <sys/timerfd.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <netinet/tcp.h>
@@ -20,6 +21,12 @@ EpollConnectionHandler::~EpollConnectionHandler() {
         close(listenFd_);
         listenFd_ = -1;
     }
+    
+    if(timerFd_ > 0) {
+        close(timerFd_);
+        timerFd_ = -1;
+    }
+
     logger_.Info("[Epoll]: Cleaned up sockets successfully");
 }
 
@@ -68,6 +75,33 @@ void EpollConnectionHandler::Initialize(const std::string& host, int port) {
     ev.data.fd = listenFd_;
     if(epoll_ctl(epollFd_, EPOLL_CTL_ADD, listenFd_, &ev) < 0)
         logger_.Fatal("[Epoll]: Failed to add listenFd to epoll");
+
+    // Initialize timeout handler
+    timerWheel_.Init(
+        networkConfig.maxConnections,
+        128,               // Number of slots, power of 2
+        1,                 // 1 tick = 1 second
+        TimeUnit::Seconds
+    );
+    
+    timerFd_ = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if(timerFd_ < 0)
+        logger_.Fatal("[Epoll]: Failed to create timerfd");
+
+    itimerspec ts{};
+    ts.it_interval.tv_sec  = INVOKE_TIMEOUT_COOLDOWN;
+    ts.it_interval.tv_nsec = 0;
+    ts.it_value.tv_sec     = INVOKE_TIMEOUT_DELAY;
+    ts.it_value.tv_nsec    = 0;
+
+    if(timerfd_settime(timerFd_, 0, &ts, nullptr) < 0)
+        logger_.Fatal("[Epoll]: Failed to set timerfd");
+
+    epoll_event tev{};
+    tev.events  = EPOLLIN;
+    tev.data.fd = timerFd_;
+    if(epoll_ctl(epollFd_, EPOLL_CTL_ADD, timerFd_, &tev) < 0)
+        logger_.Fatal("[Epoll]: Failed to add timerfd to epoll");
 }
 
 void EpollConnectionHandler::SetReceiveCallback(ReceiveCallback onData)
@@ -76,7 +110,7 @@ void EpollConnectionHandler::SetReceiveCallback(ReceiveCallback onData)
 }
 
 // vvv I/O Operations vvv
-void EpollConnectionHandler::ResumeReceive(ConnectionContext *ctx)
+void EpollConnectionHandler::ResumeReceive(ConnectionContext* ctx)
 {
     if(!EnsureReadReady(ctx))
         return;
@@ -94,7 +128,7 @@ void EpollConnectionHandler::ResumeReceive(ConnectionContext *ctx)
     }
 }
 
-void EpollConnectionHandler::Write(ConnectionContext * ctx, std::string_view msg)
+void EpollConnectionHandler::Write(ConnectionContext* ctx, std::string_view msg)
 {
     // We handle both Closing and Writing inline in this function
     // Same for other functions as well
@@ -164,7 +198,7 @@ __CleanupOrRearm:
     }
 }
 
-void EpollConnectionHandler::WriteFile(ConnectionContext *ctx, std::string path)
+void EpollConnectionHandler::WriteFile(ConnectionContext* ctx, std::string path)
 {
     // Before we proceed, ensure stuffs ready for file operation
     if(!EnsureFileReady(ctx, std::move(path))) {
@@ -178,11 +212,16 @@ void EpollConnectionHandler::WriteFile(ConnectionContext *ctx, std::string path)
     Write(ctx, {});
 }
 
-void EpollConnectionHandler::Close(ConnectionContext *ctx)
+void EpollConnectionHandler::Close(ConnectionContext* ctx)
 {
     if(!ctx)
         return;
+    
+    numConnectionsAlive_--;
 
+    std::uint32_t idx = ctx - &connections_[0];
+    timerWheel_.Cancel(idx);
+    
     epoll_ctl(epollFd_, EPOLL_CTL_DEL, ctx->socket, nullptr);
     ReleaseConnection(ctx);
 }
@@ -207,6 +246,25 @@ void EpollConnectionHandler::Run()
         for(std::uint32_t i = 0; i < nfds; i++) {
             int  fd = events_[i].data.fd;
             auto ev = events_[i].events;
+
+            // Handle timeouts
+            if(events_[i].data.fd == timerFd_) {        
+                // Reading from timerFd clears the event, so it doesnt fire a bazillion times
+                std::uint64_t expirations = 0;
+                ssize_t s = read(timerFd_, &expirations, sizeof(expirations));
+
+                if(expirations == 0 || s != sizeof(expirations))
+                    continue;
+
+                // Advance timerWheel by exactly the number of expirations
+                std::uint64_t newTick = timerWheel_.GetTick() + (INVOKE_TIMEOUT_COOLDOWN * expirations);
+                timerWheel_.Tick(newTick, [this](std::uint32_t connId) {
+                                            ConnectionContext* ctx = &connections_[connId];
+                                            if(ctx->GetConnectionState() != ConnectionState::CONNECTION_CLOSE)
+                                                Close(ctx);
+                                        });
+                continue;
+            }
 
             // Accept new connections
             if(fd == listenFd_) {
@@ -254,36 +312,40 @@ void EpollConnectionHandler::Run()
                     cev.events   = EPOLLIN | EPOLLET; // Allow both
                     cev.data.ptr = ctx;
                     epoll_ctl(epollFd_, EPOLL_CTL_ADD, clientFd, &cev);
+
+                    numConnectionsAlive_++;
                 }
+                continue;
             }
+            
             // Handle existing connections
-            else {
-                auto* ctx = reinterpret_cast<ConnectionContext*>(events_[i].data.ptr);
+            auto* ctx = reinterpret_cast<ConnectionContext*>(events_[i].data.ptr);
 
-                if(ev & (EPOLLERR | EPOLLHUP)) {
-                    Close(ctx);
-                    continue;
-                }
+            if(ev & (EPOLLERR | EPOLLHUP)) {
+                Close(ctx);
+                continue;
+            }
 
-                if(ev & EPOLLIN) {
-                    Receive(ctx);
-                    continue;
-                }
-                
-                if(ev & EPOLLOUT) {
-                    if(ctx->eventType == EventType::EVENT_SEND_FILE)
-                        SendFile(ctx);
-                    else if(ctx->eventType == EventType::EVENT_SEND)
-                        Write(ctx, {});
-                }
+            if(ev & EPOLLIN) {
+                Receive(ctx);
+                continue;
+            }
+            
+            if(ev & EPOLLOUT) {
+                if(ctx->eventType == EventType::EVENT_SEND_FILE)
+                    SendFile(ctx);
+                else if(ctx->eventType == EventType::EVENT_SEND)
+                    Write(ctx, {});
             }
         }
     }
 }
 
-HttpTickType EpollConnectionHandler::GetCurrentTick()
+void EpollConnectionHandler::RefreshExpiry(ConnectionContext* ctx, std::uint16_t timeoutSeconds)
 {
-    return 0;
+    // Use array index as wheel position
+    std::uint32_t idx = ctx - &connections_[0];
+    timerWheel_.Schedule(idx, timeoutSeconds);
 }
 
 void EpollConnectionHandler::Stop()
@@ -370,7 +432,7 @@ bool EpollConnectionHandler::EnsureFileReady(ConnectionContext* ctx, std::string
     return true;
 }
 
-bool EpollConnectionHandler::EnsureReadReady(ConnectionContext *ctx)
+bool EpollConnectionHandler::EnsureReadReady(ConnectionContext* ctx)
 {
     auto& rwBuffer = ctx->rwBuffer;
     auto& netCfg   = config_.networkConfig;
@@ -386,7 +448,7 @@ bool EpollConnectionHandler::EnsureReadReady(ConnectionContext *ctx)
     return true;
 }
 
-int EpollConnectionHandler::ResolveHostToIpv4(const char *host, in_addr *outAddr)
+int EpollConnectionHandler::ResolveHostToIpv4(const char* host, in_addr* outAddr)
 {
     addrinfo hints = { 0 };
     addrinfo *res = nullptr, *rp = nullptr;
@@ -414,7 +476,7 @@ int EpollConnectionHandler::ResolveHostToIpv4(const char *host, in_addr *outAddr
     return -1;
 }
 
-void EpollConnectionHandler::Receive(ConnectionContext *ctx)
+void EpollConnectionHandler::Receive(ConnectionContext* ctx)
 {
     // Ensure buffer is ready
     if(!EnsureReadReady(ctx))
@@ -455,7 +517,7 @@ void EpollConnectionHandler::Receive(ConnectionContext *ctx)
         onReceive_(ctx);
 }
 
-void EpollConnectionHandler::SendFile(ConnectionContext *ctx)
+void EpollConnectionHandler::SendFile(ConnectionContext* ctx)
 {
     // This is called in this order: WriteFile() -> Write() [Headers sent] -> SendFile()
     // This expects fileInfo to be constructed and set beforehand
@@ -512,7 +574,7 @@ __CleanupOrRearm:
     }
 }
 
-void EpollConnectionHandler::PollAgain(ConnectionContext *ctx, EventType eventType)
+void EpollConnectionHandler::PollAgain(ConnectionContext* ctx, EventType eventType)
 {
     ctx->eventType = eventType;
                 

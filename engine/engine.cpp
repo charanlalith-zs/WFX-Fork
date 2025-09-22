@@ -51,19 +51,21 @@ void Engine::HandleRequest(ConnectionContext* ctx)
     Response userRes{&res, WFX::Shared::GetHttpAPIV1(), WFX::Shared::GetConfigAPIV1()};
 
     HttpParseState state = HttpParser::Parse(ctx);
+    auto& networkConfig  = config_.networkConfig;
 
     switch(state)
-    {        
+    {
         case HttpParseState::PARSE_INCOMPLETE_HEADERS:
         case HttpParseState::PARSE_INCOMPLETE_BODY:
-            // ctx->timeoutTick = connHandler_->GetCurrentTick();
             ctx->SetConnectionState(ConnectionState::CONNECTION_ALIVE);
+            connHandler_->RefreshExpiry(ctx, state == HttpParseState::PARSE_INCOMPLETE_HEADERS ?
+                                            networkConfig.headerTimeout : networkConfig.bodyTimeout);
             connHandler_->ResumeReceive(ctx);
             return;
         
         case HttpParseState::PARSE_EXPECT_100:
-            // ctx->timeoutTick = connHandler_->GetCurrentTick();
             ctx->SetConnectionState(ConnectionState::CONNECTION_ALIVE);
+            connHandler_->RefreshExpiry(ctx, networkConfig.bodyTimeout);
             connHandler_->Write(ctx, "HTTP/1.1 100 Continue\r\n\r\n");
             return;
         
@@ -78,8 +80,8 @@ void Engine::HandleRequest(ConnectionContext* ctx)
             // HTTP/1.1 and HTTP/2 have different formats dawg
             res.version = ctx->requestInfo->version;
 
-            auto& reqInfo     = ctx->requestInfo;
-            auto  conn        = reqInfo->headers.GetHeader("Connection");
+            auto& reqInfo     = *ctx->requestInfo;
+            auto  conn        = reqInfo.headers.GetHeader("Connection");
             bool  shouldClose = true;
 
             if(!conn.empty()) {
@@ -90,9 +92,9 @@ void Engine::HandleRequest(ConnectionContext* ctx)
                 res.Set("Connection", "close");
             
             // A bit of shortcut if its public route (starts with '/public/')
-            if(StartsWith(reqInfo->path, "/public/")) {
+            if(StartsWith(reqInfo.path, "/public/")) {
                 // Skip the '/public' part (7 chars)
-                std::string_view relativePath = reqInfo->path.substr(7); 
+                std::string_view relativePath = reqInfo.path.substr(7); 
                 std::string fullRoute = config_.projectConfig.publicDir + std::string(relativePath);
 
                 // Send the file
@@ -102,22 +104,22 @@ void Engine::HandleRequest(ConnectionContext* ctx)
             else {
                 // Get the callback for the route we got, if it doesn't exist, we display error
                 auto callback = Router::GetInstance().MatchRoute(
-                                    reqInfo->method,
-                                    reqInfo->path,
-                                    reqInfo->pathSegments
+                                    reqInfo.method,
+                                    reqInfo.path,
+                                    reqInfo.pathSegments
                                 );
     
                 if(!callback)
                     res.Status(HttpStatus::NOT_FOUND).SendText("404: Route not found :(");
                 else {
                     // Only execute user callback if middleware chain is successful
-                    if(middleware_.ExecuteMiddleware(*reqInfo, userRes))
-                        (*callback)(*reqInfo, userRes);
+                    if(middleware_.ExecuteMiddleware(reqInfo, userRes))
+                        (*callback)(reqInfo, userRes);
                 }
             }
 
             ctx->parseState = static_cast<std::uint8_t>(HttpParseState::PARSE_IDLE);
-            // ctx->timeoutTick = connHandler_->GetCurrentTick();
+            connHandler_->RefreshExpiry(ctx, networkConfig.idleTimeout);
 
             HandleResponse(res, ctx, shouldClose);
             return;

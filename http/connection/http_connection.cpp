@@ -76,7 +76,6 @@ void ConnectionContext::ResetContext()
     expectedBodyLength = 0;
     eventType          = EventType::EVENT_ACCEPT;
     parseState         = 0;
-    timeoutTick        = 0;
     trackBytes         = 0;
 }
 

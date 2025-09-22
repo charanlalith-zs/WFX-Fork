@@ -31,7 +31,6 @@ namespace WFX::CLI {
     constexpr const char* COMPILER_DISPLAY  = "G++ (MinGW)";
     constexpr const char* COMPILER_CARGS    =
         "-std=c++17 -O2 -flto -ffunction-sections -fdata-sections "
-        "-fno-rtti -fno-exceptions "
         "-fvisibility=hidden -fvisibility-inlines-hidden "
         "-I. -Iwfx/include -Iwfx -c";
     constexpr const char* COMPILER_LARGS    =
@@ -43,7 +42,6 @@ namespace WFX::CLI {
     constexpr const char* COMPILER_DISPLAY  = "Clang++";
     constexpr const char* COMPILER_CARGS    =
         "-std=c++17 -O2 -flto -fvisibility=hidden -fvisibility-inlines-hidden "
-        "-fno-rtti -fno-exceptions "
         "-ffunction-sections -fdata-sections "
         "-I. -Iwfx/include -Iwfx -c";
     constexpr const char* COMPILER_LARGS    =
@@ -55,7 +53,6 @@ namespace WFX::CLI {
     constexpr const char* COMPILER_DISPLAY  = "G++";
     constexpr const char* COMPILER_CARGS    =
         "-std=c++17 -O2 -flto -fvisibility=hidden -fvisibility-inlines-hidden "
-        "-fno-rtti -fno-exceptions "
         "-ffunction-sections -fdata-sections "
         "-I. -Iwfx/include -Iwfx -c";
     constexpr const char* COMPILER_LARGS    =

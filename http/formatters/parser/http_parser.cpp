@@ -274,9 +274,8 @@ bool HttpParser::ParseBody(const char* data, std::size_t size, std::size_t& pos,
     if(contentLen > Config::GetInstance().networkConfig.maxBodyTotalSize)
         return false;
 
-    outRequest.body = std::string_view(data + pos, contentLen);
+    outRequest.SetContext("body", std::string_view{data + pos, contentLen});
     pos += contentLen;
-
     return true;
 }
 

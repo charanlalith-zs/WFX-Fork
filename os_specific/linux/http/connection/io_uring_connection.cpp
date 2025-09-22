@@ -316,9 +316,9 @@ void IoUringConnectionHandler::Run()
     }
 }
 
-HttpTickType IoUringConnectionHandler::GetCurrentTick()
+void IoUringConnectionHandler::RefreshExpiry(ConnectionContext* ctx, std::uint16_t timeoutSeconds)
 {
-    return 0;
+    ctx->expiry = std::chrono::steady_clock::now() + std::chrono::seconds(timeoutSeconds);
 }
 
 void IoUringConnectionHandler::Stop()

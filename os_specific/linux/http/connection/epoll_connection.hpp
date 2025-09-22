@@ -8,6 +8,7 @@
 #include "http/limits/ip_limiter/ip_limiter.hpp"
 #include "os_specific/linux/utils/file_cache/file_cache.hpp"
 #include "utils/buffer_pool/buffer_pool.hpp"
+#include "utils/timer_wheel/timer_wheel.hpp"
 
 #include <sys/epoll.h>
 #include <atomic>
@@ -18,6 +19,9 @@ namespace WFX::OSSpecific {
 using namespace WFX::Http;  // For 'HttpConnectionHandler', 'ReceiveCallback', 'ConnectionContext', ...
 using namespace WFX::Utils; // For 'Logger', 'RWBuffer', ...
 using namespace WFX::Core;  // For 'Config'
+
+static constexpr int INVOKE_TIMEOUT_COOLDOWN = 5; // In seconds
+static constexpr int INVOKE_TIMEOUT_DELAY    = 1; // In seconds
 
 class EpollConnectionHandler : public HttpConnectionHandler {
 public:
@@ -35,9 +39,9 @@ public: // I/O Operations
     void Close(ConnectionContext* ctx)                               override;
     
 public: // Main Functions
-    void         Run()            override;
-    HttpTickType GetCurrentTick() override;
-    void         Stop()           override;
+    void Run()                                                               override;
+    void RefreshExpiry(ConnectionContext* ctx, std::uint16_t timeoutSeconds) override;
+    void Stop()                                                              override;
 
 private: // Helper Functions
     int                AllocSlot(std::uint64_t* bitmap, int numWords, int maxSlots);
@@ -62,6 +66,10 @@ private:
     BufferPool        pool_{1, 1024 * 1024, [](std::size_t currSize){ return currSize * 2; }};
     FileCache         fileCache_{config_.osSpecificConfig.fileCacheSize};
 
+private: // Timeout handler
+    int        timerFd_ = -1;
+    TimerWheel timerWheel_;
+
 private:
     // Epoll
     int           listenFd_  = -1;
@@ -75,6 +83,9 @@ private:
     std::unique_ptr<ConnectionContext[]> connections_ = nullptr;
     std::unique_ptr<std::uint64_t[]>     connBitmap_  = nullptr;
     std::uint32_t                        connWords_   = 0;
+
+    // TODO: FOR DEBUG ONLY, REMOVE IT AFTER
+    std::uint64_t numConnectionsAlive_ = 0;
 };
 
 } // namespace WFX::OSSpecific

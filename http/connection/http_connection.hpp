@@ -108,7 +108,6 @@ struct ConnectionContext : public ConnectionTag {
         std::uint8_t isFileOperation : 1;                //  v
     };                                                   // 1 byte
 
-    std::uint16_t timeoutTick = 0;                       // 2 bytes
     std::uint32_t trackBytes  = 0;                       // 4 bytes
     
     // 16-byte buffer
@@ -158,8 +157,8 @@ public:
     // Run the main connection loop (can be used by dev/serve mode)
     virtual void Run() = 0;
 
-    // Get the current tick. Each of the connection backend will implement TickScheduler
-    virtual HttpTickType GetCurrentTick() = 0;
+    // Refresh the connection's expiry time
+    virtual void RefreshExpiry(ConnectionContext* ctx, std::uint16_t timeoutSeconds) = 0;
 
     // Shutdown the main connection loop, cleanup everything
     virtual void Stop() = 0;

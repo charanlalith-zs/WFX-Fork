@@ -40,9 +40,9 @@ public: // I/O Operations
     void Close(ConnectionContext* ctx)                               override;
     
 public: // Main Functions
-    void         Run()            override;
-    HttpTickType GetCurrentTick() override;
-    void         Stop()           override;
+    void Run()                                                               override;
+    void RefreshExpiry(ConnectionContext* ctx, std::uint16_t timeoutSeconds) override;
+    void Stop()                                                              override;
 
 private: // Helper Functions
     int                AllocSlot(std::uint64_t* bitmap, int numWords, int maxSlots);
