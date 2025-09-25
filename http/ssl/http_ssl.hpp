@@ -25,6 +25,13 @@ enum class SSLError : std::uint8_t {
     FATAL
 };
 
+enum class SSLShutdownResult {
+    DONE,
+    WANT_READ,
+    WANT_WRITE,
+    FAILED
+};
+
 struct SSLResult {
     SSLError error;
     int      res;
@@ -46,7 +53,7 @@ public:
     virtual SSLResult Write(void* conn, const char* buf, int len) = 0;
 
     // Shutdown and Free connection
-    virtual void Shutdown(void* conn) = 0;
+    virtual SSLShutdownResult Shutdown(void* conn) = 0;
 };
 
 } // namespace WFX::Http

@@ -12,16 +12,18 @@
 #endif
 
 namespace WFX::Http {
-    // Factory function that returns the correct handler
-    inline std::unique_ptr<HttpWFXSSL> CreateSSLHandler()
-    {
-    #ifdef WFX_HTTP_USE_OPENSSL
-        return std::make_unique<HttpOpenSSL>();
-    #else
-        static_assert(false, "WFX_HTTP_USE_OPENSSL macro not found. Only OpenSSL backend is supported for now");
-        return nullptr;
-    #endif
-    }
+
+// Factory function that returns the correct handler
+inline std::unique_ptr<HttpWFXSSL> CreateSSLHandler()
+{
+#ifdef WFX_HTTP_USE_OPENSSL
+    return std::make_unique<HttpOpenSSL>();
+#else
+    static_assert(false, "WFX_HTTP_USE_OPENSSL macro not found. Only OpenSSL backend is supported for now");
+    return nullptr;
+#endif
 }
+
+} // namespace WFX::Http
 
 #endif // WFX_HTTP_SSL_FACTORY_HPP

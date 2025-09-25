@@ -72,6 +72,7 @@ void ConnectionContext::ResetContext()
     
     connectionState    = 0;
     isFileOperation    = 0;
+    isShuttingDown     = 0;
     connInfo           = WFXIpAddress{};
     expectedBodyLength = 0;
     eventType          = EventType::EVENT_ACCEPT;

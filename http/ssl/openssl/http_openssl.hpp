@@ -4,8 +4,7 @@
 #define WFX_HTTP_OPENSSL_HPP
 
 #include "../http_ssl.hpp"
-#include <openssl/ssl.h>
-#include <string>
+#include <openssl/types.h>
 
 namespace WFX::Http {
 
@@ -15,11 +14,14 @@ public:
     ~HttpOpenSSL() override;
 
 public: // Main functions
-    void*     Wrap(SSLSocket fd)                          override;
-    bool      Handshake(void* conn)                       override;
-    SSLResult Read(void* conn, char* buf, int len)        override;
-    SSLResult Write(void* conn, const char* buf, int len) override;
-    void      Shutdown(void* conn)                        override;
+    void*             Wrap(SSLSocket fd)                          override;
+    bool              Handshake(void* conn)                       override;
+    SSLResult         Read(void* conn, char* buf, int len)        override;
+    SSLResult         Write(void* conn, const char* buf, int len) override;
+    SSLShutdownResult Shutdown(void* conn)                        override;
+
+private: // Helper functions
+    void GlobalOpenSSLInit();
 
 private:
     SSL_CTX* ctx = nullptr;

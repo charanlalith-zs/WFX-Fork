@@ -63,7 +63,8 @@ enum class EventType : std::uint8_t {
     EVENT_HANDSHAKE, // For SSL
     EVENT_RECV,
     EVENT_SEND,
-    EVENT_SEND_FILE
+    EVENT_SEND_FILE,
+    EVENT_SHUTDOWN  // For SSL
 };
 
 enum class ConnectionState : std::uint8_t {
@@ -97,8 +98,9 @@ struct ConnectionTag {
 struct ConnectionContext : public ConnectionTag {
     struct {
         std::uint8_t parseState      : 4;         // --
-        std::uint8_t connectionState : 3;         //  |
-        std::uint8_t isFileOperation : 1;         //  v
+        std::uint8_t connectionState : 2;         //  |
+        std::uint8_t isFileOperation : 1;         //  |
+        std::uint8_t isShuttingDown  : 1;         //  v
     };                                            // 1 byte
 
     bool          handshakeDone       = false;    // 1 byte

@@ -17,19 +17,21 @@
 #endif
 
 namespace WFX::Http {
-    // Factory function that returns the correct handler
-    inline std::unique_ptr<HttpConnectionHandler> CreateConnectionHandler(bool useHttps)
-    {
-    #ifdef _WIN32
-        return std::make_unique<WFX::OSSpecific::IocpConnectionHandler>();
+
+// Factory function that returns the correct handler
+inline std::unique_ptr<HttpConnectionHandler> CreateConnectionHandler(bool useHttps)
+{
+#ifdef _WIN32
+    return std::make_unique<WFX::OSSpecific::IocpConnectionHandler>();
+#else
+    #ifdef WFX_LINUX_USE_IO_URING
+        return std::make_unique<WFX::OSSpecific::IoUringConnectionHandler>();
     #else
-        #ifdef WFX_LINUX_USE_IO_URING
-            return std::make_unique<WFX::OSSpecific::IoUringConnectionHandler>();
-        #else
-            return std::make_unique<WFX::OSSpecific::EpollConnectionHandler>(useHttps);
-        #endif
+        return std::make_unique<WFX::OSSpecific::EpollConnectionHandler>(useHttps);
     #endif
-    }
+#endif
 }
+
+} // namespace WFX::Http
 
 #endif // WFX_HTTP_CONNECTION_FACTORY_HPP

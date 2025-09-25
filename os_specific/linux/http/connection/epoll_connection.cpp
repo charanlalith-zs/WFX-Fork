@@ -3,6 +3,7 @@
 #include "epoll_connection.hpp"
 
 #include "http/common/http_error_msgs.hpp"
+#include "http/ssl/http_ssl_factory.hpp"
 #include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/timerfd.h>
@@ -128,11 +129,6 @@ void EpollConnectionHandler::ResumeReceive(ConnectionContext* ctx)
 
 void EpollConnectionHandler::Write(ConnectionContext* ctx, std::string_view msg)
 {
-    // We handle both Closing and Writing inline in this function
-    // Same for other functions as well
-    auto& networkConfig = config_.networkConfig;
-    ssize_t n = 0;
-
     // Case 1: Direct send (used only for static error codes)
     // NOTE: CHANGE OF PLANS, msg is fire and forget, i don't care if they get delivered-
     // -or not, if u want good error messages u will go the hard route anyways (res.Status().SendText()...)
@@ -148,37 +144,25 @@ void EpollConnectionHandler::Write(ConnectionContext* ctx, std::string_view msg)
         if(!writeMeta || writeMeta->writtenLength >= writeMeta->dataLength)
             goto __CleanupOrRearm;
 
-        char* buf = ctx->rwBuffer.GetWriteData() + writeMeta->writtenLength;
-        std::uint32_t remaining = writeMeta->dataLength - writeMeta->writtenLength;
+        while(writeMeta->writtenLength < writeMeta->dataLength) {
+            const char* buf = ctx->rwBuffer.GetWriteData() + writeMeta->writtenLength;
+            std::size_t remaining = writeMeta->dataLength - writeMeta->writtenLength;
 
-        // Early bail out
-        if(remaining == 0)
-            goto __CleanupOrRearm;
+            ssize_t n = WrapWrite(ctx, buf, remaining);
 
-        n = WrapWrite(ctx, buf, remaining);
-
-        if(n > 0) {
-            writeMeta->writtenLength += n;
-
-            // If everything sent, disarm EPOLLOUT
-            if(writeMeta->writtenLength >= writeMeta->dataLength)
-                goto __CleanupOrRearm;
-
-            // Partial write, must wait for EPOLLOUT
-            else
-                PollAgain(ctx, EventType::EVENT_SEND, EPOLLOUT | EPOLLET);
-        }
-        else if(n < 0) {
-            // Socket not ready yet, wait for EPOLLOUT
-            if(errno == EAGAIN || errno == EWOULDBLOCK)
-                PollAgain(ctx, EventType::EVENT_SEND, EPOLLOUT | EPOLLET);
+            if(n > 0)
+                writeMeta->writtenLength += n;
             
-            // Fatal error
-            else
-                goto __CleanupOrRearm;
+            else if(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                PollAgain(ctx, EventType::EVENT_SEND, EPOLLOUT | EPOLLET);
+                return;
+            }
+            // Connection closed / Fatal error
+            else {
+                Close(ctx);
+                return;
+            }
         }
-
-        return;
     }
 
 __CleanupOrRearm:
@@ -212,19 +196,35 @@ void EpollConnectionHandler::WriteFile(ConnectionContext* ctx, std::string path)
 
 void EpollConnectionHandler::Close(ConnectionContext* ctx)
 {
-    if(!ctx)
+    // If a shutdown is already in progress, do nothing
+    if(!ctx || ctx->isShuttingDown)
         return;
     
+    // Immediately set the flag. This "locks" the connection and prevents any
+    // other event from triggering another 'Close' call
+    ctx->isShuttingDown = 1;
     numConnectionsAlive_--;
 
     std::uint32_t idx = ctx - &connections_[0];
     timerWheel_.Cancel(idx);
     
+    // For SSL, we need to perform an asynchronous shutdown if possible
     if(ctx->sslConn) {
-        sslHandler_->Shutdown(ctx->sslConn);
-        ctx->sslConn = nullptr;
+        auto res = sslHandler_->Shutdown(ctx->sslConn);
+
+        // Shutdown finished or failed immediately. Proceed to synchronous cleanup
+        if(res == SSLShutdownResult::DONE || res == SSLShutdownResult::FAILED)
+            ctx->sslConn = nullptr;
+        
+        // Wait for the event loop to complete the shutdown
+        else {
+            std::uint32_t events = ((res == SSLShutdownResult::WANT_READ) ? EPOLLIN : EPOLLOUT) | EPOLLET;
+            PollAgain(ctx, EventType::EVENT_SHUTDOWN, events);
+            return;
+        }
     }
 
+    // Synchronous cleanup for both non-SSL and SSL paths
     epoll_ctl(epollFd_, EPOLL_CTL_DEL, ctx->socket, nullptr);
     ReleaseConnection(ctx);
 }
@@ -262,6 +262,8 @@ void EpollConnectionHandler::Run()
                 if(expirations == 0 || s != sizeof(expirations))
                     continue;
                 
+                logger_.Info("<Debug Connections>: ", numConnectionsAlive_);
+                
                 // Timeout is done by TimerWheel which is O(1) if im not wrong
                 std::uint64_t newTick = timerWheel_.GetTick() + (INVOKE_TIMEOUT_COOLDOWN * expirations);
                 timerWheel_.Tick(newTick, [this](std::uint32_t connId) {
@@ -281,6 +283,10 @@ void EpollConnectionHandler::Run()
                     int clientFd = accept4(listenFd_, (sockaddr*)&addr, &len, SOCK_NONBLOCK);
                     if(clientFd < 0)
                         break;
+                    
+                    // // Disable Nagle's algorithm. Send small packets without buffering
+                    // int flag = 1;
+                    // setsockopt(clientFd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
                     // Extract IP info first
                     WFXIpAddress tmpIp;
@@ -299,14 +305,14 @@ void EpollConnectionHandler::Run()
                     // Check limiter
                     if(!ipLimiter_.AllowConnection(tmpIp)) {
                         close(clientFd);
-                        break;
+                        continue;
                     }
 
                     // Grab a connection slot
                     ConnectionContext* ctx = GetConnection();
                     if(!ctx) {
                         close(clientFd);
-                        break;
+                        continue;
                     }
 
                     // Set connection info
@@ -321,6 +327,12 @@ void EpollConnectionHandler::Run()
             
             // Handle existing connections
             auto* ctx = reinterpret_cast<ConnectionContext*>(events_[i].data.ptr);
+
+            // If a connection is shutting down, ignore all events except the final SHUTDOWN-
+            // -event itself. This prevents trying to read / write to a connection-
+            // -that is bout to die anyways
+            if(ctx->isShuttingDown && ctx->eventType != EventType::EVENT_SHUTDOWN)
+                continue;
 
             if(ev & (EPOLLERR | EPOLLHUP)) {
                 Close(ctx);
@@ -341,6 +353,29 @@ void EpollConnectionHandler::Run()
                 else
                     PollAgain(ctx, EventType::EVENT_HANDSHAKE, EPOLLIN | EPOLLOUT | EPOLLET);
 
+                continue;
+            }
+            
+            // SSL shutdown is in progress
+            if(ctx->eventType == EventType::EVENT_SHUTDOWN) {
+                auto res = sslHandler_->Shutdown(ctx->sslConn);
+
+                switch(res) {
+                    case SSLShutdownResult::DONE:
+                    case SSLShutdownResult::FAILED:
+                        ctx->sslConn = nullptr;
+                        epoll_ctl(epollFd_, EPOLL_CTL_DEL, ctx->socket, nullptr);
+                        ReleaseConnection(ctx);
+                        break;
+
+                    case SSLShutdownResult::WANT_READ:
+                        PollAgain(ctx, EventType::EVENT_SHUTDOWN, EPOLLIN | EPOLLET);
+                        break;
+
+                    case SSLShutdownResult::WANT_WRITE:
+                        PollAgain(ctx, EventType::EVENT_SHUTDOWN, EPOLLOUT | EPOLLET);
+                        break;
+                }
                 continue;
             }
 
@@ -520,17 +555,26 @@ void EpollConnectionHandler::Receive(ConnectionContext* ctx)
         }
 
         ssize_t res = WrapRead(ctx, region.ptr, region.len);
-        if(res <= 0) {
-            if(res == 0 || (errno != EAGAIN && errno != EWOULDBLOCK))
-                Close(ctx);
-
-            break; // Stop on EAGAIN / closed
+        // Fully handle SSL + TCP edge-triggered
+        if(res > 0) {
+            rwBuffer.AdvanceReadLength(res);
+            gotData = true;
         }
-
-        // Advance buffer + null-terminate
-        rwBuffer.AdvanceReadLength(res);
-        // rwBuffer.GetReadData()[rwBuffer.GetReadMeta()->dataLength - 1] = '\0';
-        gotData = true;
+        // Connection closed by peer
+        else if(res == 0) {
+            Close(ctx);
+            return;
+        }
+        // res < 0
+        else {
+            // Done reading for now
+            if(errno == EAGAIN || errno == EWOULDBLOCK)
+                break;
+            
+            // Fatal error
+            Close(ctx);
+            return;
+        }
     }
 
     // Notify app
@@ -550,43 +594,29 @@ void EpollConnectionHandler::SendFile(ConnectionContext* ctx)
     }
 
     auto* fileInfo = ctx->fileInfo;
-    int fd       = fileInfo->fd;
-    off_t size   = fileInfo->fileSize;
-    off_t offset = fileInfo->offset;
+    int   fd       = fileInfo->fd;
 
-    // Early exit
-    if(offset >= size)
-        goto __CleanupOrRearm;
+    while(fileInfo->offset < fileInfo->fileSize) {
+        ssize_t n = ::sendfile(ctx->socket, fd, &fileInfo->offset,
+                               fileInfo->fileSize - fileInfo->offset);
+        // Try to send more of file
+        if(n > 0)
+            continue;
 
-    else {
-        while(offset < size) {
-            ssize_t n = ::sendfile(ctx->socket, fd, &offset, size - offset);
-
-            if(n > 0) {
-                fileInfo->offset = offset; // Update after successful send
-                continue;                  // Try to push more in same event
-            }
-
-            if(n < 0) {
-                // Partial progress, wait for EPOLLOUT again
-                if(errno == EAGAIN || errno == EWOULDBLOCK) {
-                    fileInfo->offset = offset;
-                    PollAgain(ctx, EventType::EVENT_SEND_FILE, EPOLLOUT | EPOLLET);
-                    return;
-                }
-                // Fatal error
-                else {
-                    Close(ctx);
-                    return;
-                }
-            }
-
-            // n == 0 means nothing was written, break to cleanup
-            goto __CleanupOrRearm;
+        if(n < 0) {
+            // Partial progress, wait for EPOLLOUT again
+            if(errno == EAGAIN || errno == EWOULDBLOCK)
+                PollAgain(ctx, EventType::EVENT_SEND_FILE, EPOLLOUT | EPOLLET);
+            else
+                Close(ctx);
+            
+            return;
         }
+
+        // EOF / nothing sent
+        break;
     }
 
-__CleanupOrRearm:
     if(ctx->GetConnectionState() == ConnectionState::CONNECTION_CLOSE)
         Close(ctx);
     else {

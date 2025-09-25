@@ -6,7 +6,7 @@
 #include "config/config.hpp"
 #include "http/connection/http_connection.hpp"
 #include "http/limits/ip_limiter/ip_limiter.hpp"
-#include "http/ssl/http_ssl_factory.hpp"
+#include "http/ssl/http_ssl.hpp"
 #include "os_specific/linux/utils/file_cache/file_cache.hpp"
 #include "utils/buffer_pool/buffer_pool.hpp"
 #include "utils/timer_wheel/timer_wheel.hpp"
