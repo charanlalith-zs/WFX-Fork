@@ -5,13 +5,14 @@
 
 namespace WFX::Http {
 
-void RouteTrie::Insert(std::string_view fullRoute, HttpCallbackType handler)
+const TrieNode* RouteTrie::Insert(std::string_view fullRoute, HttpCallbackType handler)
 {
     TrieNode* node = InsertRoute(fullRoute);
     node->callback = std::move(handler);
+    return node; // Can be used for various stuff
 }
 
-const HttpCallbackType* RouteTrie::Match(std::string_view requestPath, PathSegments& outParams) const
+const TrieNode* RouteTrie::Match(std::string_view requestPath, PathSegments& outParams) const
 {
     const TrieNode* current = &root_;
     requestPath = StripRoute(requestPath);
@@ -106,7 +107,7 @@ const HttpCallbackType* RouteTrie::Match(std::string_view requestPath, PathSegme
         current = next;
     }
 
-    return (current->callback) ? std::addressof(current->callback) : nullptr;
+    return (current->callback) ? current : nullptr;
 }
 
 void RouteTrie::PushGroup(std::string_view prefix)

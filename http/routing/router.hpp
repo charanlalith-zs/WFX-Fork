@@ -11,8 +11,8 @@ class Router {
 public:
     static Router& GetInstance();
 
-    void                    RegisterRoute(HttpMethod method, std::string_view path, HttpCallbackType handler);
-    const HttpCallbackType* MatchRoute(HttpMethod method, std::string_view path, PathSegments& outParams) const;
+    const TrieNode* RegisterRoute(HttpMethod method, std::string_view path, HttpCallbackType handler);
+    const TrieNode* MatchRoute(HttpMethod method, std::string_view path, PathSegments& outParams) const;
 
     void PushRouteGroup(std::string_view prefix);
     void PopRouteGroup();

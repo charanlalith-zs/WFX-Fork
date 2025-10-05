@@ -7,8 +7,8 @@ wfx doctor	Check requirements for WFX
 To implement:
 1. Auto user code compiling into dll (Done)
 2. Middleware (Done)
-3. HTTPS
-4. Per route middleware
+3. HTTPS (Done)
+4. Per route middleware (Done)
 5. Hot-Reload
 6. HTML Templating (SSR)
 7. DB support

@@ -11,7 +11,7 @@ Router& Router::GetInstance()
     return router;
 }
 
-void Router::RegisterRoute(HttpMethod method, std::string_view path, HttpCallbackType handler)
+const TrieNode* Router::RegisterRoute(HttpMethod method, std::string_view path, HttpCallbackType handler)
 {
     if(path.empty() || path[0] != '/')
         Logger::GetInstance().Fatal("[Router]: Path is either empty or does not start with '/'.");
@@ -19,19 +19,28 @@ void Router::RegisterRoute(HttpMethod method, std::string_view path, HttpCallbac
     switch(method)
     {
         case HttpMethod::GET:
-            getRoutes_.Insert(path, std::move(handler));
-            break;
+            return getRoutes_.Insert(path, std::move(handler));
+
         case HttpMethod::POST:
-            postRoutes_.Insert(path, std::move(handler));
-            break;
+            return postRoutes_.Insert(path, std::move(handler));
+
         default:
             Logger::GetInstance().Fatal(
                 "[Router]: Unsupported HTTP method found in RegisterRoute. Use HttpMethod::GET or HttpMethod::POST."
             );
+            // All that to suppress a warning :(
+            #if defined(_MSC_VER)
+                __assume(false);
+            #elif defined(__GNUC__) || defined(__clang__)
+                __builtin_unreachable();
+            #else
+                // Fallback: just return nullptr
+                return nullptr;
+            #endif
     }
 }
 
-const HttpCallbackType* Router::MatchRoute(HttpMethod method, std::string_view path, PathSegments& outSegments) const
+const TrieNode* Router::MatchRoute(HttpMethod method, std::string_view path, PathSegments& outSegments) const
 {
     // We will always assume that the segments we receive will contain data as-
     // -we are working in a keep-alive supported architecture, so the previous data needs-

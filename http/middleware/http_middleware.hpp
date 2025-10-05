@@ -6,20 +6,24 @@
 
 namespace WFX::Http {
 
-using MiddlewareName    = std::string_view;
-using MiddlewareStack   = std::vector<MiddlewareCallbackType>;
-using MiddlewareOrder   = const std::vector<std::string>&;
-using MiddlewareFactory = std::unordered_map<MiddlewareName, MiddlewareCallbackType>;
+// Forward declare TrieNode*, defined inside of routing/route_segment.hpp
+struct TrieNode;
+
+using MiddlewareName        = std::string_view;
+using MiddlewareConfigOrder = const std::vector<std::string>&;
+using MiddlewareFactory     = std::unordered_map<MiddlewareName, MiddlewareCallbackType>;
+using MiddlewarePerRoute    = std::unordered_map<const TrieNode*, MiddlewareStack>;
 
 class HttpMiddleware {
 public:
     static HttpMiddleware& GetInstance();
 
     void RegisterMiddleware(MiddlewareName name, MiddlewareCallbackType mw);
-    bool ExecuteMiddleware(HttpRequest& req, Response& res);
+    void RegisterPerRouteMiddleware(const TrieNode* node, MiddlewareStack mwStack);
+    bool ExecuteMiddleware(const TrieNode* node, HttpRequest& req, Response& res);
     
     // Using std::string because TOML loader returns vector<string>
-    void LoadMiddlewareFromConfig(MiddlewareOrder order);
+    void LoadMiddlewareFromConfig(MiddlewareConfigOrder order);
 
     void DiscardFactoryMap();
 
@@ -32,9 +36,13 @@ private:
     HttpMiddleware(HttpMiddleware&&)                 = delete;
     HttpMiddleware& operator=(HttpMiddleware&&)      = delete;
 
+private: // Helper functions
+    bool ExecuteHelper(HttpRequest& req, Response& res, const MiddlewareStack& stack);
+
 private:
-    MiddlewareFactory middlewareFactories_;
-    MiddlewareStack   middlewareCallbacks_;
+    MiddlewareFactory  middlewareFactories_;
+    MiddlewareStack    middlewareGlobalCallbacks_;
+    MiddlewarePerRoute middlewarePerRouteCallbacks_;
 };
 
 } // namespace WFX::Http

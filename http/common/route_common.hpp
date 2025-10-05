@@ -32,7 +32,8 @@ enum class MiddlewareAction
 };
 
 // Used throughout the entire program, hopefully
-using MiddlewareCallbackType = WFX::Utils::MoveOnlyFunction<MiddlewareAction(WFX::Http::HttpRequest&, Response&)>;
 using HttpCallbackType       = WFX::Utils::MoveOnlyFunction<void(WFX::Http::HttpRequest&, Response&)>;
+using MiddlewareCallbackType = WFX::Utils::MoveOnlyFunction<MiddlewareAction(WFX::Http::HttpRequest&, Response&)>;
+using MiddlewareStack        = std::vector<MiddlewareCallbackType>;
 
 #endif // WFX_HTTP_ROUTE_COMMON_HPP

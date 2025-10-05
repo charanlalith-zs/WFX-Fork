@@ -2,6 +2,7 @@
 #define WFX_INC_HTTP_ROUTE_MACROS_HPP
 
 #include "aliases.hpp"
+#include "helper.hpp"
 #include "response.hpp"
 #include "common/core.hpp"
 #include "shared/utils/deferred_init_vector.hpp"
@@ -22,12 +23,29 @@
         }                                                               \
     } WFX_ROUTE_INSTANCE(uniq);
 
+#define WFX_INTERNAL_ROUTE_REGISTER_EX_IMPL(method, path, mw, callback, uniq) \
+    static struct WFX_ROUTE_CLASS(method, uniq) {                             \
+        WFX_ROUTE_CLASS(method, uniq)() {                                     \
+            WFX::Shared::__WFXDeferredRoutes().emplace_back([] {              \
+                __wfx_api->GetHttpAPIV1()->RegisterRouteEx(                   \
+                    WFX::Http::HttpMethod::method, path, mw, callback         \
+                );                                                            \
+            });                                                               \
+        }                                                                     \
+    } WFX_ROUTE_INSTANCE(uniq);
+
 #define WFX_INTERNAL_ROUTE_REGISTER(method, path, callback)             \
     WFX_INTERNAL_ROUTE_REGISTER_IMPL(method, path, callback, __COUNTER__)
+
+#define WFX_INTERNAL_ROUTE_REGISTER_EX(method, path, mw, callback)      \
+    WFX_INTERNAL_ROUTE_REGISTER_EX_IMPL(method, path, mw, callback, __COUNTER__)
 
 // vvv HTTP MACROS vvv
 #define WFX_GET(path, cb)  WFX_INTERNAL_ROUTE_REGISTER(GET, path, cb)
 #define WFX_POST(path, cb) WFX_INTERNAL_ROUTE_REGISTER(POST, path, cb)
+
+#define WFX_GET_EX(path, mw, cb)  WFX_INTERNAL_ROUTE_REGISTER_EX(GET, path, mw, cb)
+#define WFX_POST_EX(path, mw, cb) WFX_INTERNAL_ROUTE_REGISTER_EX(POST, path, mw, cb)
 
 // vvv ROUTE GROUPING vvv
 #define WFX_GROUP_START_IMPL(path, id)                                \

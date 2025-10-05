@@ -101,18 +101,18 @@ void Engine::HandleRequest(ConnectionContext* ctx)
             }
             else {
                 // Get the callback for the route we got, if it doesn't exist, we display error
-                auto callback = Router::GetInstance().MatchRoute(
+                auto node = Router::GetInstance().MatchRoute(
                                     reqInfo.method,
                                     reqInfo.path,
                                     reqInfo.pathSegments
                                 );
-    
-                if(!callback)
+
+                if(!node)
                     res.Status(HttpStatus::NOT_FOUND).SendText("404: Route not found :(");
                 else {
                     // Only execute user callback if middleware chain is successful
-                    if(middleware_.ExecuteMiddleware(reqInfo, userRes))
-                        (*callback)(reqInfo, userRes);
+                    if(middleware_.ExecuteMiddleware(node, reqInfo, userRes))
+                        (node->callback)(reqInfo, userRes);
                 }
             }
 

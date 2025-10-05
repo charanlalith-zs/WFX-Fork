@@ -19,6 +19,7 @@ enum class HttpAPIVersion : std::uint8_t {
 // vvv All aliases for clarity vvv
 // Routing
 using RegisterRouteFn         = void (*)(HttpMethod method, std::string_view path, HttpCallbackType callback);
+using RegisterRouteExFn       = void (*)(HttpMethod method, std::string_view path, MiddlewareStack mwStack, HttpCallbackType callback);
 using PushRoutePrefixFn       = void (*)(std::string_view prefix);
 using PopRoutePrefixFn        = void (*)();
 
@@ -43,13 +44,11 @@ using SendTextRvalueFn        = WFX::Utils::MoveOnlyFunction<void(HttpResponse*,
 using SendJsonRvalueFn        = WFX::Utils::MoveOnlyFunction<void(HttpResponse*, Json&&)>;
 using SendFileRvalueFn        = WFX::Utils::MoveOnlyFunction<void(HttpResponse*, std::string&&, bool)>;
 
-// Query
-using IsFileOperationFn       = bool (*)(const HttpResponse* backend);
-
 // vvv API declarations vvv
 struct HTTP_API_TABLE {
     // Routing
     RegisterRouteFn         RegisterRoute;
+    RegisterRouteExFn       RegisterRouteEx;
     PushRoutePrefixFn       PushRoutePrefix;
     PopRoutePrefixFn        PopRoutePrefix;
 

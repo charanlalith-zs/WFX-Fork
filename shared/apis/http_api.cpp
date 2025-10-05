@@ -13,7 +13,11 @@ const HTTP_API_TABLE* GetHttpAPIV1()
     static HTTP_API_TABLE __GlobalHttpAPIV1 = {
         // Routing
         [](HttpMethod method, std::string_view path, HttpCallbackType cb) {  // RegisterRoute
-            Router::GetInstance().RegisterRoute(method, path, std::move(cb));
+            (void)Router::GetInstance().RegisterRoute(method, path, std::move(cb));
+        },
+        [](HttpMethod method, std::string_view path, MiddlewareStack mwStack, HttpCallbackType cb) { // RegisterRouteEx
+            auto* node = Router::GetInstance().RegisterRoute(method, path, std::move(cb));
+            HttpMiddleware::GetInstance().RegisterPerRouteMiddleware(node, std::move(mwStack));
         },
         [](std::string_view prefix) {  // PushRoutePrefix
             Router::GetInstance().PushRouteGroup(prefix);
