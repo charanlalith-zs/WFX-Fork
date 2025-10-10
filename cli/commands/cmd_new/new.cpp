@@ -76,7 +76,6 @@ request_threads    = "all"   # Threads executing user handlers
 [Linux]
 worker_processes = 2      # Max simultaneous worker connections
 backlog          = 1024   # Max pending connections in OS listen queue
-file_cache_size  = 20     # Number of files cached for efficiency
 
 [Linux.IoUring]
 accept_slots     = 64     # Max simultaneous connections being accepted
@@ -86,6 +85,10 @@ file_chunk_size  = 65536  # How big of a file chunk to send at once
 
 [Linux.Epoll]
 max_events       = 1024   # How many events should epoll handle at a time
+
+[Misc]
+file_cache_size     = 20     # Number of files cached for efficiency
+template_chunk_size = 16384  # Max chunk size to read at once when compiling templates
 )");
 
     // Default route

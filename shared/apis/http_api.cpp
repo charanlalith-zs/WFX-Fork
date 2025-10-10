@@ -56,6 +56,12 @@ const HTTP_API_TABLE* GetHttpAPIV1()
         SendFileRvalueFn{[](HttpResponse* backend, std::string&& path, bool autoHandle404) {  // SendFileRvalueFn
             backend->SendFile(std::move(path), autoHandle404);
         }},
+        [](HttpResponse* backend, const char* cstr, bool autoHandle404) {  // SendTemplateCStrFn
+            backend->SendTemplate(cstr, autoHandle404);
+        },
+        SendTemplateRvalueFn{[](HttpResponse* backend, std::string&& path, bool autoHandle404) {  // SendTemplateRvalueFn
+            backend->SendTemplate(std::move(path), autoHandle404);
+        }},
 
         // Version
         HttpAPIVersion::V1

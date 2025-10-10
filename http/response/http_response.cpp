@@ -1,5 +1,6 @@
 #include "http_response.hpp"
 
+#include "engine/template_engine.hpp"
 #include "http/common/http_detector.hpp"
 #include "utils/filesystem/filesystem.hpp"
 #include "utils/backport/string.hpp"
@@ -13,6 +14,7 @@
 namespace WFX::Http {
 
 using namespace WFX::Utils; // For 'Logger', 'FileSystem'
+using namespace WFX::Core;  // For 'TemplateEngine'
 
 constexpr const char* CONTENT_TYPE_PLAIN = "text/plain";
 constexpr const char* CONTENT_TYPE_JSON  = "application/json";
@@ -90,6 +92,35 @@ void HttpResponse::SendFile(std::string&& path, bool autoHandle404)
     PrepareFileHeaders(std::get<std::string>(body));
 }
 
+void HttpResponse::SendTemplate(const char* cstr, bool autoHandle404)
+{
+    SendTemplate(std::string(cstr), autoHandle404);
+}
+
+void HttpResponse::SendTemplate(std::string&& path, bool autoHandle404)
+{
+    if(!std::holds_alternative<std::monostate>(body))
+        Logger::GetInstance()
+            .Fatal("[HttpResponse]: SendTemplate() called after body already set");
+
+    auto meta = TemplateEngine::GetInstance().GetTemplate(std::move(path));
+    if(!meta && autoHandle404) {
+        Status(HttpStatus::NOT_FOUND)
+            .SendText("Template not found");
+        return;
+    }
+
+    isFileOperation_ = true;
+
+    // If template meta exists, template file exists as well
+    // Rn we just handle 'static' templates which can be served as is
+    body = std::string_view{meta->fullPath};
+
+    // Set remaining
+    headers.SetHeader("Content-Length", UInt64ToStr(meta->size));
+    headers.SetHeader("Content-Type", "text/html");
+}
+
 // vvv HELPER FUNCTIONS vvv
 void HttpResponse::SetTextBody(std::string&& text, const char* contentType)
 {
@@ -116,7 +147,7 @@ bool HttpResponse::ValidateFileSend(std::string_view path, bool autoHandle404)
 
     if(autoHandle404 && !fs.FileExists(path.data())) {
         Status(HttpStatus::NOT_FOUND)
-        .SendText("File not found");
+            .SendText("File not found");
         return false;
     }
 

@@ -9,12 +9,14 @@ namespace WFX::Core {
 using namespace WFX::Utils;
 using namespace WFX::Core::ConfigHelpers;
 
-Config& Config::GetInstance() {
+Config& Config::GetInstance()
+{
     static Config config;
     return config;
 }
 
-void Config::LoadCoreSettings(std::string_view path) {
+void Config::LoadCoreSettings(std::string_view path)
+{
     Logger& logger = Logger::GetInstance();
 
     try {
@@ -81,7 +83,6 @@ void Config::LoadCoreSettings(std::string_view path) {
     #else
         ExtractValue(tbl, logger, "Linux", "worker_processes", osSpecificConfig.workerProcesses);
         ExtractValue(tbl, logger, "Linux", "backlog",          osSpecificConfig.backlog);
-        ExtractValue(tbl, logger, "Linux", "file_cache_size",  osSpecificConfig.fileCacheSize);
         
         #ifdef WFX_LINUX_USE_IO_URING
             ExtractValue(tbl, logger, "Linux.IoUring", "accept_slots",    osSpecificConfig.acceptSlots);
@@ -92,14 +93,18 @@ void Config::LoadCoreSettings(std::string_view path) {
             ExtractValue(tbl, logger, "Linux.Epoll", "max_events", osSpecificConfig.maxEvents);
         #endif // WFX_LINUX_USE_IO_URING
     #endif // _WIN32
+
+        // vvv Misc vvv
+        ExtractValue(tbl, logger, "Misc", "file_cache_size",      miscConfig.fileCacheSize);
+        ExtractValue(tbl, logger, "Misc", "template_chunk_size",  miscConfig.templateChunkSize);
     }
     catch(const toml::parse_error& err) {
-        logger.Fatal("[Config]: '", path, "' ", err.what(),
-                     ". 'wfx.toml' should be present for the framework to 'w o r k'.");
+        logger.Fatal("[Config]: File -> 'wfx.toml', Error -> ", err.what());
     }
 }
 
-void Config::LoadToolchainSettings(std::string_view path) {
+void Config::LoadToolchainSettings(std::string_view path)
+{
     Logger& logger = Logger::GetInstance();
     try {
         auto tbl = toml::parse_file(path);
@@ -112,8 +117,7 @@ void Config::LoadToolchainSettings(std::string_view path) {
         ExtractValueOrFatal(tbl, logger, "Compiler", "dllflag", toolchainConfig.dllFlag);
     }
     catch(const toml::parse_error& err) {
-        logger.Fatal("[Config]: '", path, "' ", err.what(),
-                     ". Run 'wfx doctor' to generate ", path);
+        logger.Fatal("[Config]: File -> 'toolchain.toml', Error -> ", err.what());
     }
 }
 

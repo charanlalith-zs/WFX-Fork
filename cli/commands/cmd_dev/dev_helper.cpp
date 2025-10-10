@@ -62,8 +62,8 @@ void HandleUserSrcCompilation(const char* dllDir, const char* dllPath)
         // Construct compile command
         std::string compileCmd = compilerBase + "\"" + cppFile + "\" " + objPrefix + objFile + "\"";
         auto result = proc.RunProcess(compileCmd);
-        if(result.exitCode < 0 || result.osCode == 1)
-            logger.Fatal("[WFX-Master]: Compilation failed for: ", cppFile, "OS code: ", result.osCode);
+        if(result.exitCode != 0)
+            logger.Fatal("[WFX-Master]: Compilation failed for: ", cppFile, ". OS code: ", result.osCode);
 
         // Append obj to link command
         linkCmd += "\"" + objFile + "\" ";
@@ -87,8 +87,8 @@ void HandleUserSrcCompilation(const char* dllDir, const char* dllPath)
     linkCmd += dllLinkTail;
 
     auto linkResult = proc.RunProcess(linkCmd);
-    if(linkResult.exitCode < 0 || linkResult.osCode == 1)
-        logger.Fatal("[WFX-Master]: Linking failed. DLL not created. Error: ", linkResult.osCode);
+    if(linkResult.exitCode != 0)
+        logger.Fatal("[WFX-Master]: Linking failed. DLL not created. OS code: ", linkResult.osCode);
 
     logger.Info("[WFX-Master]: User project successfully compiled to ", dllDir);
 }

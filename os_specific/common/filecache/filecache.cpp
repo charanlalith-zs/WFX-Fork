@@ -21,7 +21,7 @@ using namespace WFX::Core; // For 'Config'
 FileCache::FileCache()
     : minFreq_(0)
 {
-    std::size_t capacity = Config::GetInstance().osSpecificConfig.fileCacheSize;
+    std::size_t capacity = Config::GetInstance().miscConfig.fileCacheSize;
     std::size_t safe     = capacity;
 
 #ifndef _WIN32

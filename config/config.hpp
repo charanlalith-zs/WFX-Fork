@@ -64,7 +64,6 @@ struct OSSpecificConfig {
 #else
     std::uint32_t workerProcesses = 4;
     std::uint32_t backlog         = 1024;
-    std::uint16_t fileCacheSize   = 20;
     
     #ifdef WFX_LINUX_USE_IO_URING
         std::uint16_t batchSize       = 64;
@@ -75,6 +74,11 @@ struct OSSpecificConfig {
         std::uint16_t maxEvents       = 1 * 1024;
     #endif // WFX_LINUX_USE_IO_URING
 #endif // _WIN32
+};
+
+struct MiscConfig {
+    std::uint16_t fileCacheSize     = 20;
+    std::uint32_t templateChunkSize = 16 * 1024;
 };
 
 struct ToolchainConfig {
@@ -101,6 +105,7 @@ public: // Main storage space for configurations
     NetworkConfig    networkConfig;
     SSLConfig        sslConfig;
     OSSpecificConfig osSpecificConfig;
+    MiscConfig       miscConfig;
     ToolchainConfig  toolchainConfig;
 
 private:

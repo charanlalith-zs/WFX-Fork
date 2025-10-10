@@ -44,6 +44,10 @@ using SendTextRvalueFn        = WFX::Utils::MoveOnlyFunction<void(HttpResponse*,
 using SendJsonRvalueFn        = WFX::Utils::MoveOnlyFunction<void(HttpResponse*, Json&&)>;
 using SendFileRvalueFn        = WFX::Utils::MoveOnlyFunction<void(HttpResponse*, std::string&&, bool)>;
 
+// SendTemplate, has the same api signature as SendFile
+using SendTemplateCStrFn      = SendFileCStrFn;
+using SendTemplateRvalueFn    = SendFileRvalueFn;
+
 // vvv API declarations vvv
 struct HTTP_API_TABLE {
     // Routing
@@ -70,6 +74,10 @@ struct HTTP_API_TABLE {
     // SendFile overloads
     SendFileCStrFn          SendFileCStr;
     SendFileRvalueFn        SendFileMove;
+
+    // SendTemplate overloads
+    SendTemplateCStrFn      SendTemplateCStr;
+    SendTemplateRvalueFn    SendTemplateMove;
 
     // Metadata
     HttpAPIVersion          apiVersion;

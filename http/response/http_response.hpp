@@ -34,6 +34,9 @@ struct HttpResponse {
     void SendFile(const char* cstr, bool autoHandle404);
     void SendFile(std::string&& path, bool autoHandle404);
 
+    void SendTemplate(const char* cstr, bool autoHandle404);
+    void SendTemplate(std::string&& path, bool autoHandle404);
+
 private:
     void SetTextBody(std::string&& text, const char* contentType);
     void PrepareFileHeaders(std::string_view path);

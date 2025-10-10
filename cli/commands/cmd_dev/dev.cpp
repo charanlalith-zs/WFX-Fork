@@ -31,20 +31,27 @@ int RunDevServer(const ServerConfig& cfg)
 
     signal(SIGINT, HandleMasterSignal);
     signal(SIGTERM, SIG_IGN);
-    
+
     // Handle initialization of SSL key before we do anything else
     if(!RandomPool::GetInstance().GetBytes(globalState.sslKey.data(), globalState.sslKey.size()))
         logger.Fatal("[WFX-Master]: Failed to initialize SSL key");
-    
+
     // Handle compilation of templates
-    globalState.templateEnginePtr = &TemplateEngine::GetInstance();
+    auto& templateEngine = TemplateEngine::GetInstance();
+    if(cfg.GetFlag(ServerFlags::NO_TEMPLATE_CACHE))
+        templateEngine.PreCompileTemplates();
+
+    // We store it in global state because template engine carries mappings from-
+    // -relative paths (index.html) -> template metadata (type, path, etc)
+    // We want to be able to access same data across workers even after COW
+    globalState.templateEnginePtr = &templateEngine;
 
     // This will be used in compiling of user dll
     const std::string dllDir      = config.projectConfig.projectName + "/build/dlls/";
     const char*       dllDirCStr  = dllDir.c_str();
     const std::string dllPath     = dllDir + "user_entry.so";
     const char*       dllPathCStr = dllPath.c_str();
-    
+
     if(cfg.GetFlag(ServerFlags::NO_BUILD_CACHE) || !fs.FileExists(dllPathCStr))
         HandleUserSrcCompilation(dllDirCStr, dllPathCStr);
     else
@@ -63,7 +70,7 @@ int RunDevServer(const ServerConfig& cfg)
 
     for(int i = 0; i < osConfig.workerProcesses; i++) {
         pid_t pid = fork();
-        
+
         // --- Child Worker ---
         if(pid == 0) {
             if(i == 0)
@@ -90,10 +97,10 @@ int RunDevServer(const ServerConfig& cfg)
             globalState.workerPids.push_back(pid);
             if(i == 0)
                 globalState.workerPGID = pid; // Store PGID for process group
-            
+
             setpgid(pid, globalState.workerPGID);
         }
-        
+
         else {
             logger.Error("[WFX-Master]: Failed to fork worker ", i);
             return 1;

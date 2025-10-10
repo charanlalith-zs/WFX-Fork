@@ -52,9 +52,16 @@ target_include_directories(wfx PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 
-# Compile/link optimizations to shrink binary
-target_compile_options(wfx PRIVATE -ffunction-sections -fdata-sections -fvisibility=hidden -g0 -flto)
-target_link_options(wfx PRIVATE -Wl,--gc-sections -Wl,--as-needed -Wl,-s -flto)
+# Compile/link optimizations to shrink binary only in release
+target_compile_options(wfx PRIVATE
+    $<$<CONFIG:Release>:-ffunction-sections -fdata-sections -fvisibility=hidden -flto>
+)
+target_link_options(wfx PRIVATE
+    $<$<CONFIG:Release>:-Wl,--gc-sections -Wl,--as-needed -Wl,-s -flto>
+)
+target_compile_options(wfx PRIVATE
+    $<$<CONFIG:Debug>:-g -O0>
+)
 
 # OS-specific system libraries
 if(WIN32)

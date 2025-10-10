@@ -6,7 +6,7 @@
 #include <string>
 #include <charconv>
 
-// Bunch of functions which exist in C++20 that don't exist in C++20
+// Bunch of functions which exist in C++20 that don't exist in C++17
 // or
 // Just String utility functions
 namespace WFX::Utils {
@@ -108,6 +108,33 @@ inline constexpr std::uint8_t UInt8FromHexChar(std::uint8_t uc) noexcept
     uint8_t isHex   = (hi < 6);
 
     return (isDigit * lo) | (isHex * (hi + 10)) | ((isDigit | isHex) ? 0 : 0xFF);
+}
+
+// vvv Misc vvv
+inline void TrimInline(std::string& s)
+{
+    std::size_t start = 0;
+    std::size_t end   = s.size();
+
+    // Trim front
+    while(start < end && std::isspace(static_cast<unsigned char>(s[start])))
+        ++start;
+
+    // Trim back
+    while(end > start && std::isspace(static_cast<unsigned char>(s[end - 1])))
+        --end;
+
+    // Shift characters in-place
+    if(start > 0) {
+        std::size_t i = 0;
+        for(; start < end; ++i, ++start)
+            s[i] = s[start];
+    
+        s.resize(i);
+    }
+    // Just resize to trim end
+    else
+        s.resize(end);
 }
 
 } // namespace WFX::Utils

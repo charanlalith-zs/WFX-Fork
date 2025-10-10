@@ -13,12 +13,14 @@ namespace WFX::Http {
 /* User side implementation of 'Response' class. CoreEngine passes the API */
 class Response {
 public:
-    Response(WFX::Http::HttpResponse* backend,
+    Response(
+        WFX::Http::HttpResponse* backend,
         const WFX::Shared::HTTP_API_TABLE* httpApi,
-        const WFX::Shared::CONFIG_API_TABLE* configApi)
+        const WFX::Shared::CONFIG_API_TABLE* configApi
+    )
         : backend_(backend), httpApi_(httpApi), configApi_(configApi)
     {
-        assert(httpApi_ && configApi_);
+        assert(backend_ && httpApi_ && configApi_);
     }
 
     Response& Status(WFX::Http::HttpStatus code)
@@ -46,12 +48,8 @@ public:
     void SendFile(std::string&& path, bool autoHandle404 = true) { httpApi_->SendFileMove(backend_, std::move(path), autoHandle404); }
 
     // SendTemplate overloads
-    void SendTemplate(const char* path, bool autoHandle404 = true) { SendTemplate(std::string{path}, autoHandle404); }
-    void SendTemplate(std::string&& path, bool autoHandle404 = true)
-    {
-        auto& templateDir = configApi_->GetConfig().projectConfig.templateDir;
-        SendFile(templateDir + '/' + path, autoHandle404);
-    }
+    void SendTemplate(const char* path, bool autoHandle404 = true)   { httpApi_->SendTemplateCStr(backend_, path, autoHandle404); }
+    void SendTemplate(std::string&& path, bool autoHandle404 = true) { httpApi_->SendTemplateMove(backend_, std::move(path), autoHandle404); }
 
 private:
     WFX::Http::HttpResponse*             backend_;
