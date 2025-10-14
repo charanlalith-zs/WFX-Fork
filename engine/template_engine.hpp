@@ -26,12 +26,15 @@ struct TemplateMeta {
 
 // <Type, FileSize>
 using TemplateResult = std::pair<TemplateType, std::size_t>;
+using BufferPtr      = std::unique_ptr<char[]>;
 
 class TemplateEngine final {
 public:
     static TemplateEngine& GetInstance();
 
-    void          PreCompileTemplates();
+    bool          LoadTemplatesFromCache(); // ---
+    void          SaveTemplatesToCache();   //   | -> To be called in master process only
+    void          PreCompileTemplates();    // ---
     TemplateMeta* GetTemplate(std::string&& relPath);
 
 private: // Nested helper types for the parser
@@ -41,36 +44,53 @@ private: // Nested helper types for the parser
         REGULAR_LINE
     };
 
-    struct TemplateFrame {
-        BaseFilePtr             file;
-        std::unique_ptr<char[]> readBuf;
-        std::unique_ptr<char[]> writeBuf;
-        std::size_t             writePos{0};
-        std::string             carry;
-        bool                    firstRead{true};
+    // Generic buffered I/O for writing
+    struct IOContext {
+        BaseFilePtr   file;
+        BufferPtr     buffer;
+        std::uint32_t chunkSize{0};
+        std::uint32_t offset{0};
 
-        TemplateFrame(BaseFilePtr f, std::size_t chunkSize) :
-            file(std::move(f)),
-            readBuf(std::make_unique<char[]>(chunkSize)),
-            writeBuf(std::make_unique<char[]>(chunkSize))
+        IOContext(BaseFilePtr f, std::uint32_t chunk)
+            : file(std::move(f)),
+            buffer(std::make_unique<char[]>(chunk)),
+            chunkSize(chunk)
+        {}
+    };
+
+    struct TemplateFrame {
+        BaseFilePtr   file;
+        BufferPtr     readBuf;
+        std::string   carry;
+        bool          firstRead{true};
+
+        TemplateFrame(BaseFilePtr f, std::uint32_t chunkSize)
+            : file(std::move(f)),
+            readBuf(std::make_unique<char[]>(chunkSize))
         {}
     };
     
+    // Compilation context
     struct CompilationContext {
-        BaseFilePtr               outTemplate;
-        std::deque<TemplateFrame> stack;
-        bool                      foundInclude;
-        std::size_t               chunkSize;
+        IOContext                 io;          // Unified write buffer
+        std::deque<TemplateFrame> stack;       // Recursive includes
+        std::size_t               chunkSize{0};
+        bool                      foundInclude{false};
+
+        CompilationContext(BaseFilePtr out, std::uint32_t chunk)
+            : io(std::move(out), chunk),
+            chunkSize(chunk)
+        {}
     };
 
 private: // Helper functions
     TemplateResult CompileTemplate(BaseFilePtr inTemplate, BaseFilePtr outTemplate);
+    bool           PushInclude(CompilationContext& context, const std::string& relPath);
+    LineResult     ProcessLine(CompilationContext& context, const std::string& line);
 
-private: // Even more helper functions
-    bool       FlushWrite(CompilationContext& context, TemplateFrame& frame, bool force = false);
-    bool       SafeWrite(CompilationContext& context, TemplateFrame& frame, const char* data, std::size_t size);
-    bool       PushInclude(CompilationContext& context, const std::string& relPath);
-    LineResult ProcessLine(CompilationContext& context, const std::string& line);
+private: // IO Functions
+    bool FlushWrite(IOContext& context, bool force = false);
+    bool SafeWrite(IOContext& context, const void* data, std::size_t size);
 
 private:
     TemplateEngine()  = default;
@@ -83,16 +103,23 @@ private:
     TemplateEngine& operator=(TemplateEngine&&)      = delete;
 
 private: // For ease of use across functions
-    constexpr static std::string_view partialTag     = "{% partial %}";
-    constexpr static std::size_t      partialTagSize = partialTag.size();
+    constexpr static std::string_view partialTag_     = "{% partial %}";
+    constexpr static std::size_t      partialTagSize_ = partialTag_.size();
+
+    constexpr static const char*      cacheFile_      = "/build/templates/cache.bin";
+    constexpr static const char*      staticFolder_   = "/build/templates/static";
 
 private: // Storage
     Logger& logger_ = Logger::GetInstance();
 
-    // CRITICAL WARNING: The data in this map MUST be treated as immutable after initial
-    // population. Internal engine code may store string_views that point directly to the
-    // 'fullPath' strings contained here. Modifying this map at runtime (e.g., adding,
-    // removing, or reloading templates) will cause dangling pointers and crash the server
+    // We don't want to save template data to cache.bin always, only save it if we-
+    // -compile the templates, in which case there might be a chance the data is modified
+    bool resaveCacheFile_ = false;
+
+    // CRITICAL WARNING: The data in this map MUST be treated as immutable after initial-
+    // -population. Internal engine code may store string_views that point directly to the-
+    // -'fullPath' strings contained here. Modifying this map at runtime (e.g., adding,-
+    // -removing, or reloading templates) will cause dangling pointers and crash the server
     std::unordered_map<std::string, TemplateMeta> templates_;
 };
 

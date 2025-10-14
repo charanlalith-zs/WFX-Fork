@@ -89,6 +89,7 @@ max_events       = 1024   # How many events should epoll handle at a time
 [Misc]
 file_cache_size     = 20     # Number of files cached for efficiency
 template_chunk_size = 16384  # Max chunk size to read at once when compiling templates
+cache_chunk_size    = 2048   # Max chunk size to read / write from template cache file
 )");
 
     // Default route

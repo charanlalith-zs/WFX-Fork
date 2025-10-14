@@ -8,9 +8,12 @@
 
 namespace WFX::Core::ConfigHelpers {
 
+using WFX::Utils::Logger;
+
 template<typename T>
-bool ExtractValue(const toml::table& tbl, WFX::Utils::Logger& logger,
-                  const char* section, const char* field, T& target)
+bool ExtractValue(
+    const toml::table& tbl, const char* section, const char* field, T& target
+)
 {
     std::string sec(section);
     toml::node_view<const toml::node> node{tbl};
@@ -37,26 +40,32 @@ bool ExtractValue(const toml::table& tbl, WFX::Utils::Logger& logger,
         }
     }
 
-    logger.Warn("[Config]: Missing or invalid entry: [", section, "] ", field,
-                ". Using default value: ", target);
+    Logger::GetInstance().Warn(
+        "[Config]: Missing or invalid entry: [", section, "] ", field,
+        ". Using default value: ", target
+    );
     return false;
 }
 
 template<typename T>
-void ExtractValueOrFatal(const toml::table& tbl, WFX::Utils::Logger& logger,
-                         const char* section, const char* field, T& target)
+void ExtractValueOrFatal(
+    const toml::table& tbl, const char* section, const char* field, T& target
+)
 {
     if(auto val = tbl[section][field].value<T>())
         target = *val;
     else
-        logger.Fatal("[Config]: Missing or invalid entry: [", section, "] ", field, '.');
+        Logger::GetInstance().Fatal("[Config]: Missing or invalid entry: [", section, "] ", field, '.');
 }
 
 template<typename T>
-bool ExtractAutoOrAll(const toml::table& tbl, WFX::Utils::Logger& logger,
-                      const char* section, const char* field,
-                      T& target, const T& autoValue, const T& allValue)
+bool ExtractAutoOrAll(
+    const toml::table& tbl, const char* section, const char* field,
+    T& target, const T& autoValue, const T& allValue
+)
 {
+    auto& logger = Logger::GetInstance();
+
     if(auto val = tbl[section][field].value<T>()) {
         target = *val;
         return true;
@@ -78,10 +87,13 @@ bool ExtractAutoOrAll(const toml::table& tbl, WFX::Utils::Logger& logger,
     return false;
 }
 
-inline void ExtractStringArrayOrFatal(const toml::table& tbl, WFX::Utils::Logger& logger,
-                               const char* section, const char* field,
-                               std::vector<std::string>& target)
+inline void ExtractStringArrayOrFatal(
+    const toml::table& tbl, const char* section,
+    const char* field, std::vector<std::string>& target
+)
 {
+    auto& logger = Logger::GetInstance();
+
     if(auto arr = tbl[section][field].as_array()) {
         target.clear();
         for(const auto& val : *arr) {

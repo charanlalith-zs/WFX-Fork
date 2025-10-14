@@ -2,7 +2,6 @@
 #define WFX_INC_HTTP_USER_RESPONSE_HPP
 
 #include "shared/apis/http_api.hpp"
-#include "shared/apis/config_api.hpp"
 #include <cassert>
 
 // Forward declare HttpResponse
@@ -12,15 +11,14 @@ namespace WFX::Http {
 
 /* User side implementation of 'Response' class. CoreEngine passes the API */
 class Response {
+    using ResponsePtr = WFX::Http::HttpResponse*;
+    using ApiPtr      = const WFX::Shared::HTTP_API_TABLE*;
+
 public:
-    Response(
-        WFX::Http::HttpResponse* backend,
-        const WFX::Shared::HTTP_API_TABLE* httpApi,
-        const WFX::Shared::CONFIG_API_TABLE* configApi
-    )
-        : backend_(backend), httpApi_(httpApi), configApi_(configApi)
+    Response(ResponsePtr backend, ApiPtr httpApi)
+        : backend_(backend), httpApi_(httpApi)
     {
-        assert(backend_ && httpApi_ && configApi_);
+        assert(backend_ && httpApi_);
     }
 
     Response& Status(WFX::Http::HttpStatus code)
@@ -52,9 +50,8 @@ public:
     void SendTemplate(std::string&& path, bool autoHandle404 = true) { httpApi_->SendTemplateMove(backend_, std::move(path), autoHandle404); }
 
 private:
-    WFX::Http::HttpResponse*             backend_;
-    const WFX::Shared::CONFIG_API_TABLE* configApi_;
-    const WFX::Shared::HTTP_API_TABLE*   httpApi_;
+    ResponsePtr backend_;
+    ApiPtr      httpApi_;
 };
 
 #endif // WFX_INC_HTTP_USER_RESPONSE_HPP

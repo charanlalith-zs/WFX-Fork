@@ -78,6 +78,7 @@ struct OSSpecificConfig {
 
 struct MiscConfig {
     std::uint16_t fileCacheSize     = 20;
+    std::uint16_t cacheChunkSize    = 2 * 1024;
     std::uint32_t templateChunkSize = 16 * 1024;
 };
 

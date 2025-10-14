@@ -39,8 +39,8 @@ public:
     std::size_t GetFileSize(const char* path)                const override;
 
     // File Handling
-    BaseFilePtr OpenFileRead(const char* path)  override;
-    BaseFilePtr OpenFileWrite(const char* path) override;
+    BaseFilePtr OpenFileRead(const char* path, bool inBinaryMode)  override;
+    BaseFilePtr OpenFileWrite(const char* path, bool inBinaryMode) override;
 
     // Directory Manipulation
     bool          DirectoryExists(const char* path)                                                 const override;

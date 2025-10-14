@@ -52,6 +52,9 @@ target_include_directories(wfx PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 
+# Include ssl dependencies
+include(cmake/ssl.cmake)
+
 # Compile/link optimizations to shrink binary only in release
 target_compile_options(wfx PRIVATE
     $<$<CONFIG:Release>:-ffunction-sections -fdata-sections -fvisibility=hidden -flto>
@@ -72,7 +75,7 @@ if(WIN32)
         bcrypt
     )
 elseif(UNIX)
-    target_link_libraries(wfx PRIVATE dl)
+    target_link_libraries(wfx PRIVATE dl pthread)
 
     if(WFX_LINUX_USE_IO_URING)
         target_link_libraries(wfx PRIVATE uring)
@@ -139,25 +142,3 @@ add_custom_target(build_utils
     DEPENDS wfxutils
     COMMENT "Building utils shared library only"
 )
-
-# -----------------------------
-# SSL backend selection (default: OpenSSL)
-# -----------------------------
-option(WFX_HTTP_USE_OPENSSL "Use OpenSSL as HTTPS backend" ON)
-
-if(WFX_HTTP_USE_OPENSSL)
-    # Find OpenSSL, if not, tell users to install it
-    find_package(OpenSSL REQUIRED)
-    if(NOT OpenSSL_FOUND)
-        message(FATAL_ERROR "OpenSSL not found! Install libssl-dev (Linux) or OpenSSL SDK (Windows)")
-    endif()
-
-    # Apply to main executable-
-    # -and optionally apply to utils if they include SSL headers
-    target_compile_definitions(wfx PRIVATE WFX_HTTP_USE_OPENSSL)
-    # target_compile_definitions(wfxutils PRIVATE WFX_HTTP_USE_OPENSSL)
-    
-    # Link OpenSSL libraries
-    target_link_libraries(wfx PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-    # target_link_libraries(wfxutils PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-endif()

@@ -23,40 +23,40 @@ void Config::LoadCoreSettings(std::string_view path)
         auto tbl = toml::parse_file(path);
 
         // vvv Project vvv
-        ExtractValueOrFatal(tbl, logger, "Project", "project_name", projectConfig.projectName);
-        ExtractStringArrayOrFatal(tbl, logger, "Project", "middleware_list", projectConfig.middlewareList);
+        ExtractValueOrFatal(tbl, "Project", "project_name", projectConfig.projectName);
+        ExtractStringArrayOrFatal(tbl, "Project", "middleware_list", projectConfig.middlewareList);
         
         projectConfig.publicDir   = projectConfig.projectName + "/public";
         projectConfig.templateDir = projectConfig.projectName + "/templates";
 
         // vvv SSL vvv
-        ExtractValueOrFatal(tbl, logger, "SSL", "cert_path", sslConfig.certPath);
-        ExtractValueOrFatal(tbl, logger, "SSL", "key_path",  sslConfig.keyPath);
+        ExtractValueOrFatal(tbl, "SSL", "cert_path", sslConfig.certPath);
+        ExtractValueOrFatal(tbl, "SSL", "key_path",  sslConfig.keyPath);
 
-        ExtractValue(tbl, logger, "SSL", "tls13_ciphers",        sslConfig.tls13Ciphers);
-        ExtractValue(tbl, logger, "SSL", "tls12_ciphers",        sslConfig.tls12Ciphers);
-        ExtractValue(tbl, logger, "SSL", "curves",               sslConfig.curves);
-        ExtractValue(tbl, logger, "SSL", "enable_session_cache", sslConfig.enableSessionCache);
-        ExtractValue(tbl, logger, "SSL", "enable_ktls",          sslConfig.enableKTLS);
-        ExtractValue(tbl, logger, "SSL", "session_cache_size",   sslConfig.sessionCacheSize);
-        ExtractValue(tbl, logger, "SSL", "min_proto_version",    sslConfig.minProtoVersion);
-        ExtractValue(tbl, logger, "SSL", "security_level",       sslConfig.securityLevel);
+        ExtractValue(tbl, "SSL", "tls13_ciphers",        sslConfig.tls13Ciphers);
+        ExtractValue(tbl, "SSL", "tls12_ciphers",        sslConfig.tls12Ciphers);
+        ExtractValue(tbl, "SSL", "curves",               sslConfig.curves);
+        ExtractValue(tbl, "SSL", "enable_session_cache", sslConfig.enableSessionCache);
+        ExtractValue(tbl, "SSL", "enable_ktls",          sslConfig.enableKTLS);
+        ExtractValue(tbl, "SSL", "session_cache_size",   sslConfig.sessionCacheSize);
+        ExtractValue(tbl, "SSL", "min_proto_version",    sslConfig.minProtoVersion);
+        ExtractValue(tbl, "SSL", "security_level",       sslConfig.securityLevel);
 
         // vvv Network vvv
-        ExtractValue(tbl, logger, "Network", "send_buffer_max",             networkConfig.maxSendBufferSize);
-        ExtractValue(tbl, logger, "Network", "recv_buffer_max",             networkConfig.maxRecvBufferSize);
-        ExtractValue(tbl, logger, "Network", "recv_buffer_incr",            networkConfig.bufferIncrSize);
-        ExtractValue(tbl, logger, "Network", "header_reserve_hint",         networkConfig.headerReserveHintSize);
-        ExtractValue(tbl, logger, "Network", "max_header_size",             networkConfig.maxHeaderTotalSize);
-        ExtractValue(tbl, logger, "Network", "max_header_count",            networkConfig.maxHeaderTotalCount);
-        ExtractValue(tbl, logger, "Network", "max_body_size",               networkConfig.maxBodyTotalSize);
-        ExtractValue(tbl, logger, "Network", "header_timeout",              networkConfig.headerTimeout);
-        ExtractValue(tbl, logger, "Network", "body_timeout",                networkConfig.bodyTimeout);
-        ExtractValue(tbl, logger, "Network", "idle_timeout",                networkConfig.idleTimeout);
-        ExtractValue(tbl, logger, "Network", "max_connections",             networkConfig.maxConnections);
-        ExtractValue(tbl, logger, "Network", "max_connections_per_ip",      networkConfig.maxConnectionsPerIp);
-        ExtractValue(tbl, logger, "Network", "max_request_burst_per_ip",    networkConfig.maxRequestBurstSize);
-        ExtractValue(tbl, logger, "Network", "max_requests_per_ip_per_sec", networkConfig.maxTokensPerSecond);
+        ExtractValue(tbl, "Network", "send_buffer_max",             networkConfig.maxSendBufferSize);
+        ExtractValue(tbl, "Network", "recv_buffer_max",             networkConfig.maxRecvBufferSize);
+        ExtractValue(tbl, "Network", "recv_buffer_incr",            networkConfig.bufferIncrSize);
+        ExtractValue(tbl, "Network", "header_reserve_hint",         networkConfig.headerReserveHintSize);
+        ExtractValue(tbl, "Network", "max_header_size",             networkConfig.maxHeaderTotalSize);
+        ExtractValue(tbl, "Network", "max_header_count",            networkConfig.maxHeaderTotalCount);
+        ExtractValue(tbl, "Network", "max_body_size",               networkConfig.maxBodyTotalSize);
+        ExtractValue(tbl, "Network", "header_timeout",              networkConfig.headerTimeout);
+        ExtractValue(tbl, "Network", "body_timeout",                networkConfig.bodyTimeout);
+        ExtractValue(tbl, "Network", "idle_timeout",                networkConfig.idleTimeout);
+        ExtractValue(tbl, "Network", "max_connections",             networkConfig.maxConnections);
+        ExtractValue(tbl, "Network", "max_connections_per_ip",      networkConfig.maxConnectionsPerIp);
+        ExtractValue(tbl, "Network", "max_request_burst_per_ip",    networkConfig.maxRequestBurstSize);
+        ExtractValue(tbl, "Network", "max_requests_per_ip_per_sec", networkConfig.maxTokensPerSecond);
 
         // vvv OS Specific vvv
     #ifdef _WIN32
@@ -75,28 +75,29 @@ void Config::LoadCoreSettings(std::string_view path)
         std::uint16_t defaultIOCP = std::max(2, threadCount / 2);
         std::uint16_t defaultUser = std::max(2, threadCount - defaultIOCP);
 
-        ExtractValue(tbl, logger, "Windows", "accept_slots", osSpecificConfig.maxAcceptSlots);
-        ExtractAutoOrAll(tbl, logger, "Windows", "connection_threads",
+        ExtractValue(tbl, "Windows", "accept_slots", osSpecificConfig.maxAcceptSlots);
+        ExtractAutoOrAll(tbl, "Windows", "connection_threads",
                          osSpecificConfig.workerThreadCount, defaultIOCP, threadCount);
-        ExtractAutoOrAll(tbl, logger, "Windows", "request_threads",
+        ExtractAutoOrAll(tbl, "Windows", "request_threads",
                          osSpecificConfig.callbackThreadCount, defaultUser, threadCount);
     #else
-        ExtractValue(tbl, logger, "Linux", "worker_processes", osSpecificConfig.workerProcesses);
-        ExtractValue(tbl, logger, "Linux", "backlog",          osSpecificConfig.backlog);
+        ExtractValue(tbl, "Linux", "worker_processes", osSpecificConfig.workerProcesses);
+        ExtractValue(tbl, "Linux", "backlog",          osSpecificConfig.backlog);
         
         #ifdef WFX_LINUX_USE_IO_URING
-            ExtractValue(tbl, logger, "Linux.IoUring", "accept_slots",    osSpecificConfig.acceptSlots);
-            ExtractValue(tbl, logger, "Linux.IoUring", "queue_depth",     osSpecificConfig.queueDepth);
-            ExtractValue(tbl, logger, "Linux.IoUring", "batch_size",      osSpecificConfig.batchSize);
-            ExtractValue(tbl, logger, "Linux.IoUring", "file_chunk_size", osSpecificConfig.fileChunkSize);
+            ExtractValue(tbl, "Linux.IoUring", "accept_slots",    osSpecificConfig.acceptSlots);
+            ExtractValue(tbl, "Linux.IoUring", "queue_depth",     osSpecificConfig.queueDepth);
+            ExtractValue(tbl, "Linux.IoUring", "batch_size",      osSpecificConfig.batchSize);
+            ExtractValue(tbl, "Linux.IoUring", "file_chunk_size", osSpecificConfig.fileChunkSize);
         #else
-            ExtractValue(tbl, logger, "Linux.Epoll", "max_events", osSpecificConfig.maxEvents);
+            ExtractValue(tbl, "Linux.Epoll", "max_events", osSpecificConfig.maxEvents);
         #endif // WFX_LINUX_USE_IO_URING
     #endif // _WIN32
 
         // vvv Misc vvv
-        ExtractValue(tbl, logger, "Misc", "file_cache_size",      miscConfig.fileCacheSize);
-        ExtractValue(tbl, logger, "Misc", "template_chunk_size",  miscConfig.templateChunkSize);
+        ExtractValue(tbl, "Misc", "file_cache_size",      miscConfig.fileCacheSize);
+        ExtractValue(tbl, "Misc", "cache_chunk_size",     miscConfig.cacheChunkSize);
+        ExtractValue(tbl, "Misc", "template_chunk_size",  miscConfig.templateChunkSize);
     }
     catch(const toml::parse_error& err) {
         logger.Fatal("[Config]: File -> 'wfx.toml', Error -> ", err.what());
@@ -105,19 +106,18 @@ void Config::LoadCoreSettings(std::string_view path)
 
 void Config::LoadToolchainSettings(std::string_view path)
 {
-    Logger& logger = Logger::GetInstance();
     try {
         auto tbl = toml::parse_file(path);
 
-        ExtractValueOrFatal(tbl, logger, "Compiler", "ccmd",    toolchainConfig.ccmd);
-        ExtractValueOrFatal(tbl, logger, "Compiler", "lcmd",    toolchainConfig.lcmd);
-        ExtractValueOrFatal(tbl, logger, "Compiler", "cargs",   toolchainConfig.cargs);
-        ExtractValueOrFatal(tbl, logger, "Compiler", "largs",   toolchainConfig.largs);
-        ExtractValueOrFatal(tbl, logger, "Compiler", "objflag", toolchainConfig.objFlag);
-        ExtractValueOrFatal(tbl, logger, "Compiler", "dllflag", toolchainConfig.dllFlag);
+        ExtractValueOrFatal(tbl, "Compiler", "ccmd",    toolchainConfig.ccmd);
+        ExtractValueOrFatal(tbl, "Compiler", "lcmd",    toolchainConfig.lcmd);
+        ExtractValueOrFatal(tbl, "Compiler", "cargs",   toolchainConfig.cargs);
+        ExtractValueOrFatal(tbl, "Compiler", "largs",   toolchainConfig.largs);
+        ExtractValueOrFatal(tbl, "Compiler", "objflag", toolchainConfig.objFlag);
+        ExtractValueOrFatal(tbl, "Compiler", "dllflag", toolchainConfig.dllFlag);
     }
     catch(const toml::parse_error& err) {
-        logger.Fatal("[Config]: File -> 'toolchain.toml', Error -> ", err.what());
+        Logger::GetInstance().Fatal("[Config]: File -> 'toolchain.toml', Error -> ", err.what());
     }
 }
 

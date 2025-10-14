@@ -38,8 +38,18 @@ int RunDevServer(const ServerConfig& cfg)
 
     // Handle compilation of templates
     auto& templateEngine = TemplateEngine::GetInstance();
-    if(cfg.GetFlag(ServerFlags::NO_TEMPLATE_CACHE))
+    
+    bool  recompileViaFlag = cfg.GetFlag(ServerFlags::NO_TEMPLATE_CACHE);
+    bool  recompile        = recompileViaFlag || !templateEngine.LoadTemplatesFromCache();
+    
+    if(recompile) {
+        logger.Info(
+            recompileViaFlag
+            ? "[WFX-Master]: --no-template-cache flag detected, compiling templates"
+            : "[WFX-Master]: Re-compiling templates"
+        );
         templateEngine.PreCompileTemplates();
+    }
 
     // We store it in global state because template engine carries mappings from-
     // -relative paths (index.html) -> template metadata (type, path, etc)
@@ -115,6 +125,9 @@ int RunDevServer(const ServerConfig& cfg)
     for(int i = 0; i < osConfig.workerProcesses; i++)
         waitpid(globalState.workerPids[i], nullptr, 0);
 #endif // _WIN32
+
+    // Before shutdown, write template cache to cache.bin for future use
+    templateEngine.SaveTemplatesToCache();
 
     logger.Info("[WFX-Master]: Shutdown successfully");
     return 0;

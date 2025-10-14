@@ -48,7 +48,7 @@ void CoreEngine::HandleRequest(ConnectionContext* ctx)
 {
     // This will be transmitted through all the layers (from here to middleware to user)
     HttpResponse res;
-    Response userRes{&res, WFX::Shared::GetHttpAPIV1(), WFX::Shared::GetConfigAPIV1()};
+    Response userRes{&res, WFX::Shared::GetHttpAPIV1()};
 
     HttpParseState state = HttpParser::Parse(ctx);
     auto& networkConfig  = config_.networkConfig;

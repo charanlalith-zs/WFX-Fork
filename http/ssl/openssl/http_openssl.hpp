@@ -26,10 +26,11 @@ public: // Main functions
 
 private: // Helper functions
     void GlobalOpenSSLInit();
-    void LogOpenSSLErrorAndExit(const char* message);
+    void LogOpenSSLError(const char* message, bool fatal = true);
 
 private:
-    SSL_CTX* ctx = nullptr;
+    SSL_CTX* ctx     = nullptr;
+    bool     useKtls = false;
 };
 
 } // namespace WFX::Http

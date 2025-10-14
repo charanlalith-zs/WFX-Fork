@@ -39,17 +39,17 @@ HttpOpenSSL::HttpOpenSSL()
         default: protoVersion = TLS1_2_VERSION;
     }
     if(SSL_CTX_set_min_proto_version(ctx, protoVersion) != 1)
-        LogOpenSSLErrorAndExit("Failed to set minimum TLS protocol version");
+        LogOpenSSLError("Failed to set minimum TLS protocol version");
 
     // Load certificate and private key
     if(SSL_CTX_use_certificate_chain_file(ctx, sslConfig.certPath.c_str()) <= 0)
-        LogOpenSSLErrorAndExit("Failed to load certificate chain file");
+        LogOpenSSLError("Failed to load certificate chain file");
     
     if(SSL_CTX_use_PrivateKey_file(ctx, sslConfig.keyPath.c_str(), SSL_FILETYPE_PEM) <= 0)
-        LogOpenSSLErrorAndExit("Failed to load private key");
+        LogOpenSSLError("Failed to load private key");
     
     if(!SSL_CTX_check_private_key(ctx))
-        LogOpenSSLErrorAndExit("Private key does not match certificate");
+        LogOpenSSLError("Private key does not match certificate");
 
     // Server side session caching
     if(sslConfig.enableSessionCache) {
@@ -59,14 +59,14 @@ HttpOpenSSL::HttpOpenSSL()
 
     auto& ticketKey = GetGlobalState().sslKey;
     if(SSL_CTX_set_tlsext_ticket_keys(ctx, ticketKey.data(), ticketKey.size()) != 1)
-        LogOpenSSLErrorAndExit("Failed to set session ticket keys");
+        LogOpenSSLError("Failed to set session ticket keys");
     
     // Set modern cipher preferences
     if(!sslConfig.tls13Ciphers.empty() && SSL_CTX_set_ciphersuites(ctx, sslConfig.tls13Ciphers.c_str()) != 1)
-        LogOpenSSLErrorAndExit("Failed to set TLSv1.3 ciphersuites");
+        LogOpenSSLError("Failed to set TLSv1.3 ciphersuites");
 
     if(!sslConfig.tls12Ciphers.empty() && SSL_CTX_set_cipher_list(ctx, sslConfig.tls12Ciphers.c_str()) != 1)
-        LogOpenSSLErrorAndExit("Failed to set TLSv1.2 cipher list");
+        LogOpenSSLError("Failed to set TLSv1.2 cipher list");
 
     // Set remaining essential options
     if(!sslConfig.curves.empty())
@@ -92,11 +92,13 @@ HttpOpenSSL::HttpOpenSSL()
 #endif
 
     std::uint64_t appliedOptions = SSL_CTX_set_options(ctx, options);
-    
+
 #ifdef SSL_OP_ENABLE_KTLS
     // Check if KTLS is really enabled
-    if(appliedOptions & SSL_OP_ENABLE_KTLS)
+    if(appliedOptions & SSL_OP_ENABLE_KTLS) {
+        useKtls = true;
         logger.Info("[HttpOpenSSL]: KTLS enabled for this SSL_CTX");
+    }
     else if(sslConfig.enableKTLS)
         logger.Warn("[HttpOpenSSL]: KTLS requested but not enabled (kernel/OpenSSL limitation)");
 #endif
@@ -193,12 +195,19 @@ SSLResult HttpOpenSSL::Write(void* conn, const char* buf, int len)
     }
 }
 
-SSLResult HttpOpenSSL::WriteFile(void *conn, SSLSocket fd, FileOffset offset, std::size_t count)
+SSLResult HttpOpenSSL::WriteFile(void* conn, SSLSocket fd, FileOffset offset, std::size_t count)
 {
     // Windows version does not contain SSL_sendfile, we need to use Write to send files
 #ifdef _WIN32
     static_assert(false, "Implement HttpOpenSSL.WriteFile function for Windows");
 #else
+    // SSL_sendfile can only be used with ktls enabled
+    if(!useKtls) {
+        Logger::GetInstance()
+            .Error("[HttpOpenSSL]: Enable KTLS, WriteFile does not have a backup implementation rn");
+        return { SSLReturn::FATAL, 0 };
+    }
+
     SSL*    ssl = static_cast<SSL*>(conn);
     ssize_t ret = SSL_sendfile(ssl, fd, offset, count, 0);
 
@@ -271,7 +280,7 @@ void HttpOpenSSL::GlobalOpenSSLInit()
     });
 }
 
-void HttpOpenSSL::LogOpenSSLErrorAndExit(const char *message)
+void HttpOpenSSL::LogOpenSSLError(const char* message, bool fatal)
 {
     std::string allErrors;
     unsigned long errCode;
@@ -284,10 +293,14 @@ void HttpOpenSSL::LogOpenSSLErrorAndExit(const char *message)
         allErrors.append(errBuf);
     }
 
-    if(allErrors.empty())
-        Logger::GetInstance().Fatal("[HttpOpenSSL]: ", message, ". No specific OpenSSL error code available");
+    std::string fullMessage = allErrors.empty()
+        ? std::string(message) + ". No specific OpenSSL error code available"
+        : std::string(message) + ". OpenSSL Reason(s): " + allErrors;
+
+    if(fatal)
+        Logger::GetInstance().Fatal("[HttpOpenSSL]: ", fullMessage);
     else
-        Logger::GetInstance().Fatal("[HttpOpenSSL]: ", message, ". OpenSSL Reason(s): ", allErrors);
+        Logger::GetInstance().Error("[HttpOpenSSL]: ", fullMessage);
 }
 
 } // namespace WFX::Http

@@ -51,8 +51,8 @@ public:
     virtual std::size_t GetFileSize(const char* path)                const = 0;
 
     // Open file for reading/writing: returns RAII-wrapped BaseFile
-    virtual BaseFilePtr OpenFileRead(const char* path)  = 0;
-    virtual BaseFilePtr OpenFileWrite(const char* path) = 0;
+    virtual BaseFilePtr OpenFileRead(const char* path, bool inBinaryMode = false)  = 0;
+    virtual BaseFilePtr OpenFileWrite(const char* path, bool inBinaryMode = false) = 0;
 
     // Directory Manipulation
     virtual bool          DirectoryExists(const char* path)                                                const = 0;

@@ -36,7 +36,7 @@ FileCache::FileCache()
 
 FileCache::~FileCache()
 {
-    for(auto &pair : entries_)
+    for(auto& pair : entries_)
         CloseFile(pair.second.fd);
 }
 
@@ -47,7 +47,7 @@ FileCache& FileCache::GetInstance()
     return cache;
 }
 
-std::pair<FileDescriptor, FileSize> FileCache::GetFileDesc(const std::string &path)
+std::pair<FileDescriptor, FileSize> FileCache::GetFileDesc(const std::string& path)
 {
     auto it = entries_.find(path);
     if(it != entries_.end()) {
@@ -98,7 +98,7 @@ std::pair<FileDescriptor, FileSize> FileCache::GetFileDesc(const std::string &pa
 }
 
 // vvv Helper Functions vvv
-void FileCache::Touch(const std::string &key)
+void FileCache::Touch(const std::string& key)
 {
     auto &entry = entries_[key];
     int oldFreq = entry.freq;
@@ -119,7 +119,7 @@ void FileCache::Touch(const std::string &key)
     entry.bucketIter = freqBuckets_[newFreq].begin();
 }
 
-void FileCache::Insert(const std::string &key, FileDescriptor fd, FileSize size)
+void FileCache::Insert(const std::string& key, FileDescriptor fd, FileSize size)
 {
     if(entries_.size() >= capacity_)
         Evict();

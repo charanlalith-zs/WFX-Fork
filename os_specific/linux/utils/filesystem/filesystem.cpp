@@ -25,7 +25,7 @@ void LinuxFile::Close()
 }
 
 //  --- File Operations ---
-std::int64_t LinuxFile::Read(void *buffer, std::size_t bytes)
+std::int64_t LinuxFile::Read(void* buffer, std::size_t bytes)
 {
     if(fd_ < 0)
         return 0;
@@ -34,7 +34,7 @@ std::int64_t LinuxFile::Read(void *buffer, std::size_t bytes)
     return n < 0 ? -1 : static_cast<std::int64_t>(n);
 }
 
-std::int64_t LinuxFile::Write(const void *buffer, std::size_t bytes)
+std::int64_t LinuxFile::Write(const void* buffer, std::size_t bytes)
 {
     if(fd_ < 0)
         return 0;
@@ -76,7 +76,7 @@ bool LinuxFile::IsOpen() const
 }
 
 //  --- Helper Functions ---
-bool LinuxFile::OpenRead(const char *path)
+bool LinuxFile::OpenRead(const char* path)
 {
     Close();
     fd_ = ::open(path, O_RDONLY | O_CLOEXEC);
@@ -93,7 +93,7 @@ bool LinuxFile::OpenRead(const char *path)
     return true;
 }
 
-bool LinuxFile::OpenWrite(const char *path)
+bool LinuxFile::OpenWrite(const char* path)
 {
     Close();
 
@@ -132,8 +132,11 @@ std::size_t LinuxFileSystem::GetFileSize(const char* path) const
 }
 
 // vvv File Handling vvv
-BaseFilePtr LinuxFileSystem::OpenFileRead(const char* path)
+BaseFilePtr LinuxFileSystem::OpenFileRead(const char* path, bool inBinaryMode)
 {
+    // Ignored in linux
+    (void)inBinaryMode;
+
     auto file = std::make_unique<LinuxFile>();
     if(!file->OpenRead(path))
         return nullptr;
@@ -141,8 +144,11 @@ BaseFilePtr LinuxFileSystem::OpenFileRead(const char* path)
     return file;
 }
 
-BaseFilePtr LinuxFileSystem::OpenFileWrite(const char* path)
+BaseFilePtr LinuxFileSystem::OpenFileWrite(const char* path, bool inBinaryMode)
 {
+    // Ignored in linux
+    (void)inBinaryMode;
+
     auto file = std::make_unique<LinuxFile>();
     if(!file->OpenWrite(path))
         return nullptr;
