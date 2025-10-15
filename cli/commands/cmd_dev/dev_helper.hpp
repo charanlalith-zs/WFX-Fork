@@ -3,6 +3,7 @@
 
 #include "config/config.hpp"
 #include "http/common/http_global_state.hpp"
+#include "utils/dotenv/dotenv.hpp"
 #include "utils/logger/logger.hpp"
 #include "utils/filesystem/filesystem.hpp"
 #include "utils/process/process.hpp"

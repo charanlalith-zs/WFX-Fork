@@ -41,6 +41,10 @@ bool HttpResponse::IsFileOperation() const
 void HttpResponse::SendText(const char* cstr)
 {
     auto& logger = Logger::GetInstance();
+
+    // Shouldn't happen btw
+    if(!cstr)
+        logger.Fatal("[HttpResponse]: SendText(const char*) received nullptr");
     
     if(!std::holds_alternative<std::monostate>(body))
         logger.Fatal("[HttpResponse]: SendText() called after response body already set");
@@ -74,6 +78,10 @@ void HttpResponse::SendJson(Json&& j)
 // vvv FILE vvv
 void HttpResponse::SendFile(const char* cstr, bool autoHandle404)
 {
+    // Shouldn't happen btw
+    if(!cstr)
+        Logger::GetInstance().Fatal("[HttpResponse]: SendFile(const char*) received nullptr");
+
     auto view = std::string_view{cstr};
 
     if(!ValidateFileSend(view, autoHandle404))
@@ -94,6 +102,10 @@ void HttpResponse::SendFile(std::string&& path, bool autoHandle404)
 
 void HttpResponse::SendTemplate(const char* cstr, bool autoHandle404)
 {
+    // Shouldn't happen btw
+    if(!cstr)
+        Logger::GetInstance().Fatal("[HttpResponse]: SendTemplate(const char*) received nullptr");
+
     SendTemplate(std::string(cstr), autoHandle404);
 }
 

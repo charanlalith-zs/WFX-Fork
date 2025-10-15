@@ -29,6 +29,15 @@ int RunDevServer(const ServerConfig& cfg)
     config.LoadCoreSettings("wfx.toml");
     config.LoadToolchainSettings("toolchain.toml");
 
+    EnvConfig envConfig;
+    envConfig.SetFlag(EnvFlags::REQUIRE_OWNER_UID);
+    envConfig.SetFlag(EnvFlags::REQUIRE_PERMS_600);
+
+    if(Dotenv::LoadFromFile(config.envConfig.envPath, envConfig))
+        logger.Info("[WFX-Master]: Loaded env successfully");
+    else
+        logger.Info("[WFX-Master]: Failed to load env");
+
     signal(SIGINT, HandleMasterSignal);
     signal(SIGTERM, SIG_IGN);
 
@@ -39,8 +48,8 @@ int RunDevServer(const ServerConfig& cfg)
     // Handle compilation of templates
     auto& templateEngine = TemplateEngine::GetInstance();
     
-    bool  recompileViaFlag = cfg.GetFlag(ServerFlags::NO_TEMPLATE_CACHE);
-    bool  recompile        = recompileViaFlag || !templateEngine.LoadTemplatesFromCache();
+    bool recompileViaFlag = cfg.GetFlag(ServerFlags::NO_TEMPLATE_CACHE);
+    bool recompile        = recompileViaFlag || !templateEngine.LoadTemplatesFromCache();
     
     if(recompile) {
         logger.Info(

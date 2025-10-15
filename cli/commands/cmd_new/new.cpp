@@ -54,6 +54,9 @@ max_connections_per_ip       = 20      # Per-IP connection cap
 max_request_burst_per_ip     = 10      # Initial request tokens per IP
 max_requests_per_ip_per_sec  = 5       # Refill rate (tokens per second per IP)
 
+[ENV]
+env_path = "..." # Path to .env file. IMPORTANT: Except for Windows OS, chmod 600 the env file
+
 [SSL]
 cert_path            = "..."           # Path to the server certificate (PEM format)
 key_path             = "..."           # Path to the private key corresponding to the certificate

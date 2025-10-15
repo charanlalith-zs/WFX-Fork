@@ -29,6 +29,9 @@ void Config::LoadCoreSettings(std::string_view path)
         projectConfig.publicDir   = projectConfig.projectName + "/public";
         projectConfig.templateDir = projectConfig.projectName + "/templates";
 
+        // vvv ENV vvv
+        ExtractValueOrFatal(tbl, "ENV", "env_path", envConfig.envPath);
+
         // vvv SSL vvv
         ExtractValueOrFatal(tbl, "SSL", "cert_path", sslConfig.certPath);
         ExtractValueOrFatal(tbl, "SSL", "key_path",  sslConfig.keyPath);

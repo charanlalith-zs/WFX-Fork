@@ -35,6 +35,10 @@ struct NetworkConfig {
     std::uint32_t maxTokensPerSecond  = 5;
 };
 
+struct ENVConfig {
+    std::string envPath;
+};
+
 struct SSLConfig {
     std::string certPath;
     std::string keyPath;
@@ -104,6 +108,7 @@ public: // Load from TOML
 public: // Main storage space for configurations
     ProjectConfig    projectConfig;
     NetworkConfig    networkConfig;
+    ENVConfig        envConfig;
     SSLConfig        sslConfig;
     OSSpecificConfig osSpecificConfig;
     MiscConfig       miscConfig;
