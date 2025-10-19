@@ -27,6 +27,7 @@ struct TemplateMeta {
 // <Type, FileSize>
 using TemplateResult = std::pair<TemplateType, std::size_t>;
 using BufferPtr      = std::unique_ptr<char[]>;
+using Tag            = std::pair<std::string_view, std::string_view>;
 
 class TemplateEngine final {
 public:
@@ -38,10 +39,10 @@ public:
     TemplateMeta* GetTemplate(std::string&& relPath);
 
 private: // Nested helper types for the parser
-    enum class LineResult {
+    enum class TagResult {
         FAILURE,
-        PROCESSED_INCLUDE,
-        REGULAR_LINE
+        SUCCESS,
+        CONTROL_TO_ANOTHER_FILE
     };
 
     // Generic buffered I/O for writing
@@ -62,6 +63,8 @@ private: // Nested helper types for the parser
         BaseFilePtr   file;
         BufferPtr     readBuf;
         std::string   carry;
+        std::size_t   readOffset{0};
+        std::int64_t  bytesRead{0};
         bool          firstRead{true};
 
         TemplateFrame(BaseFilePtr f, std::uint32_t chunkSize)
@@ -75,7 +78,17 @@ private: // Nested helper types for the parser
         IOContext                 io;          // Unified write buffer
         std::deque<TemplateFrame> stack;       // Recursive includes
         std::size_t               chunkSize{0};
-        bool                      foundInclude{false};
+        bool                      foundCompilingCode{false}; // ---
+        bool                      inBlock{false};            //   | -> Imma combine this into bitfields later
+        bool                      skipUntilFlag{false};      // ---
+
+        // {% extends ... %} stuff
+        std::string currentExtendsName;
+
+        // {% block ... %} stuff
+        std::unordered_map<std::string, std::string> childBlocks;
+        std::string currentBlockName;
+        std::string currentBlockContent;
 
         CompilationContext(BaseFilePtr out, std::uint32_t chunk)
             : io(std::move(out), chunk),
@@ -85,8 +98,9 @@ private: // Nested helper types for the parser
 
 private: // Helper functions
     TemplateResult CompileTemplate(BaseFilePtr inTemplate, BaseFilePtr outTemplate);
-    bool           PushInclude(CompilationContext& context, const std::string& relPath);
-    LineResult     ProcessLine(CompilationContext& context, const std::string& line);
+    bool           PushFile(CompilationContext& context, const std::string& relPath);
+    Tag            ExtractTag(std::string_view line);
+    TagResult      ProcessTag(CompilationContext& context, std::string_view line);
 
 private: // IO Functions
     bool FlushWrite(IOContext& context, bool force = false);

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "commands/cmd_build/build.hpp"
 #include "commands/cmd_new/new.hpp"
 #include "commands/cmd_doctor/doctor.hpp"
 #include "commands/cmd_dev/dev.hpp"
@@ -33,6 +34,16 @@ int WFXEntryPoint(int argc, char* argv[]) {
             return CLI::WFXDoctor();
         });
 
+    // --- Command: build ---
+    parser.AddCommand("build", "Pre-Build various parts of WFX",
+        [](const std::unordered_map<std::string, std::string>&,
+           const std::vector<std::string>& positionalArgs) -> int {
+            if(positionalArgs.empty())
+                Logger::GetInstance().Fatal("[WFX]: Build type is required. Usage: wfx build [templates|...]");
+
+            return CLI::BuildProject(positionalArgs[0]);
+        });
+
     // --- Command: dev ---
     parser.AddCommand("dev", "Start WFX dev server",
         [](const std::unordered_map<std::string, std::string>& options,
@@ -48,8 +59,8 @@ int WFXEntryPoint(int argc, char* argv[]) {
             }
 
             CLI::ServerConfig cfg;
-            cfg.host  = options.at("--host");
-            cfg.port  = port;
+            cfg.host = options.at("--host");
+            cfg.port = port;
 
             // --no-cache combinations, either use --no-cache for everything
             // or use --no-build-cache, --no-template-cache for specific stuff

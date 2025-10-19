@@ -289,14 +289,31 @@ TemplateResult TemplateEngine::CompileTemplate(BaseFilePtr inTemplate, BaseFileP
     ctx.stack.emplace_back(std::move(inTemplate), chunkSize);
     auto& stack = ctx.stack;
 
+    // Pre declare variables to allow my shitty code (goto __ProcessTag) to compile
+    // These are reused and aren't bound to a specific frame so no issue tho
+    const char*      bufStart     = nullptr;
+    std::size_t      remaining    = 0;
+    std::size_t      tagStart     = 0;
+    std::size_t      tagEnd       = 0;
+    std::string_view bodyView     = {};
+    bool             isExtending  = false;
+    bool             skipLiterals = false;
+
+    // Used by either tag [inside of frame.carry or inside of frame.readBuf]
+    std::string_view tagView{};
+
     while(!stack.empty()) {
         TemplateFrame& frame = stack.back();
 
-        std::int64_t bytesRead = frame.file->Read(frame.readBuf.get(), ctx.chunkSize);
-        if(bytesRead < 0)
+        // If we have any readOffset remaining, complete it before reading in more data
+        if(frame.readOffset > 0 && frame.bytesRead > 0)
+            goto __ContinueReading;
+
+        frame.bytesRead = frame.file->Read(frame.readBuf.get(), ctx.chunkSize);
+        if(frame.bytesRead < 0)
             return { TemplateType::FAILURE, 0 };
 
-        if(bytesRead == 0) {
+        if(frame.bytesRead == 0) {
             if(
                 !frame.carry.empty()
                 && !SafeWrite(ctx.io, frame.carry.data(), frame.carry.size())
@@ -308,67 +325,141 @@ TemplateResult TemplateEngine::CompileTemplate(BaseFilePtr inTemplate, BaseFileP
                 return { TemplateType::FAILURE, 0 };
 
             ctx.stack.pop_back();
+
+            // If current frame had an extends file, push it now
+            if(!ctx.currentExtendsName.empty()) {
+                PushFile(ctx, ctx.currentExtendsName);
+                ctx.currentExtendsName.clear();
+            }
             continue;
         }
 
-        std::size_t pos = 0;
-        char* bufPtr = frame.readBuf.get();
+__ContinueReading:
+        // Convinience purpose
+        char*       bufPtr = frame.readBuf.get();
+        std::size_t bufLen = static_cast<std::size_t>(frame.bytesRead);
 
+        // CASE 0: If the first 13 bytes are {% partial %}, skip them + skip '\n' with +1
+        // Quite strict ({% partial %} needs to be written perfectly)
         if(frame.firstRead) {
             frame.firstRead = false;
             if(
-                bytesRead >= partialTagSize_
+                frame.bytesRead >= partialTagSize_
                 && StartsWith(std::string_view(bufPtr, partialTagSize_), partialTag_)
             )
-                pos += partialTagSize_ + 1;
+                frame.readOffset += partialTagSize_ + 1;
         }
 
-        while(pos < static_cast<std::size_t>(bytesRead)) {
-            std::string line;
-            bool hasNewline = false;
-            if(!frame.carry.empty()) {
-                line = std::move(frame.carry);
+        // CASE 1: Tag incomplete from previous frame
+        if(!frame.carry.empty()) {
+            // Search for "%}" in the rest of the buffer
+            std::string_view tailView(bufPtr, bufLen);
+
+            std::size_t foundEnd = tailView.find("%}");
+            if(foundEnd == std::string_view::npos) {
+                // Tag is incomplete, append entire remainder to carry, consume chunk
+                frame.carry.append(bufPtr, bufLen);
+                frame.readOffset = 0;
+                continue;
+            }
+
+            // Found tag end in this chunk, append the data to carry, make tagView and process it
+            std::size_t appendCount = foundEnd + 2;
+
+            frame.carry.append(bufPtr, appendCount);
+            frame.readOffset = appendCount;
+
+            tagView = frame.carry;
+            goto __ProcessTag;
+        }
+
+        // CASE 2: Normal reading of data from current frame
+        while(frame.readOffset < bufLen) {
+            bufStart  = bufPtr + frame.readOffset;
+            remaining = frame.bytesRead - frame.readOffset;
+            bodyView  = {bufStart, remaining};
+
+            // If we are processing a child template (one that extends a parent)-
+            // -or skipUntilFlag is set, we should NOT write any content from it
+            isExtending  = !ctx.currentExtendsName.empty();
+            skipLiterals = isExtending || ctx.skipUntilFlag;
+
+            // No tag found, literal chunk
+            tagStart = bodyView.find("{%");
+            if(tagStart == std::string::npos) {
+                // We only append content to block if we aren't in parent template
+                // For parent template we simply just write out the content if there is no replacement
+                if(ctx.inBlock && isExtending)
+                    ctx.currentBlockContent.append(bodyView.data(), bodyView.size());
+
+                else if(!skipLiterals && !SafeWrite(ctx.io, bodyView.data(), bodyView.size()))
+                    return { TemplateType::FAILURE, 0 };
+
+                break; // Break inner loop, go to __NextChunk
+            }
+
+            // Write everything before tag as literal
+            if(ctx.inBlock && isExtending)
+                ctx.currentBlockContent.append(bodyView.data(), tagStart);
+            else if(
+                tagStart > 0
+                && !skipLiterals
+                && !SafeWrite(ctx.io, bodyView.data(), tagStart)
+            )
+                    return { TemplateType::FAILURE, 0 };
+
+            // Advance offset to the start of the tag
+            frame.readOffset += tagStart;
+
+            // Recalculate view from the tag start
+            bufStart  = bufPtr + frame.readOffset;
+            remaining = frame.bytesRead - frame.readOffset;
+            bodyView  = {bufStart, remaining};
+
+            // Incomplete tag, carry over for next read
+            tagEnd = bodyView.find("%}", 2);
+            if(tagEnd == std::string::npos) {
+                frame.carry.assign(bodyView.data(), bodyView.size());
+                goto __NextChunk;
+            }
+
+            tagView = {bodyView.data(), tagEnd + 2};
+
+            // Common functionality for both partial and fully completed tags
+        __ProcessTag:
+            TemplateEngine::TagResult tagResult = ProcessTag(ctx, tagView);
+            if(tagResult == TagResult::FAILURE)
+                return { TemplateType::FAILURE, 0 };
+
+            if(!frame.carry.empty())
                 frame.carry.clear();
-            }
 
-            std::size_t lineStartPos = pos;
-            for(; pos < static_cast<std::size_t>(bytesRead); ++pos) {
-                if(bufPtr[pos] == '\n') {
-                    hasNewline = true;
-                    line.append(bufPtr + lineStartPos, pos - lineStartPos + 1);
-                    ++pos;
-                    break;
-                }
-            }
-
-            if(!hasNewline)
-                line.append(bufPtr + lineStartPos, pos - lineStartPos);
-            
-            if(hasNewline) {
-                switch(ProcessLine(ctx, line)) {
-                    case LineResult::FAILURE:
-                        return { TemplateType::FAILURE, 0 };
-                    case LineResult::REGULAR_LINE:
-                        if(!SafeWrite(ctx.io, line.data(), line.size()))
-                            return { TemplateType::FAILURE, 0 };
-                        break;
-                    case LineResult::PROCESSED_INCLUDE:
-                        break; // Discard line
-                }
-            }
+            // We add tagView's length because 'tagEnd' is relative to
+            // 'bodyView', which starts at 'frame.readOffset'
             else
-                frame.carry = std::move(line);
+                frame.readOffset += tagView.length();
+
+            if(tagResult == TagResult::CONTROL_TO_ANOTHER_FILE)
+                goto __ContinueOuterLoop;
         }
+        // Set the read offset to be zero before reading more bytes
+    __NextChunk:
+        frame.readOffset = 0;
+
+        // Skip the read loop entirely if needed. Also the ';' is there for suppressing compiler warnings-
+        // -because empty label is ig not allowed in cxx version < C++2b
+    __ContinueOuterLoop:
+        ;
     }
 
     return {
-        ctx.foundInclude ? TemplateType::COMPILED_STATIC : TemplateType::PURE_STATIC,
+        ctx.foundCompilingCode ? TemplateType::COMPILED_STATIC : TemplateType::PURE_STATIC,
         ctx.io.file->Size()
     };
 }
 
 // vvv Helper Functions vvv
-bool TemplateEngine::PushInclude(CompilationContext& context, const std::string& relPath)
+bool TemplateEngine::PushFile(CompilationContext& context, const std::string& relPath)
 {
     auto& fs     = FileSystem::GetFileSystem();
     auto& config = Config::GetInstance();
@@ -384,29 +475,191 @@ bool TemplateEngine::PushInclude(CompilationContext& context, const std::string&
     return true;
 }
 
-TemplateEngine::LineResult TemplateEngine::ProcessLine(
-    CompilationContext& context, const std::string& line
+Tag TemplateEngine::ExtractTag(std::string_view line)
+{
+    // Find the content between {% and %}
+    std::size_t start = line.find("{%");
+    std::size_t end   = line.rfind("%}");
+
+    if(
+        start == std::string_view::npos
+        || end == std::string_view::npos
+        || start >= end
+    )
+        return {};
+
+    // Get the inner content, e.g., "  extends   'file-a.html'  "
+    std::string_view content = line.substr(start + 2, end - (start + 2));
+
+    // Trim leading whitespace to find the start of the tag name
+    std::size_t nameStart = content.find_first_not_of(" \t\n\r");
+    if(nameStart == std::string_view::npos)
+        return {};
+
+    // Find the end of the tag name (the next whitespace)
+    std::size_t nameEnd = content.find_first_of(" \t\n\r", nameStart);
+
+    // Tag has no arguments
+    if(nameEnd == std::string_view::npos)
+        return { content.substr(nameStart), {} };
+
+    std::string_view tagName = content.substr(nameStart, nameEnd - nameStart);
+    std::string_view tagArgs = content.substr(nameEnd);
+
+    // Trim leading space from arguments
+    std::size_t argsStart = tagArgs.find_first_not_of(" \t\n\r");
+
+    // Tag has no arguments
+    if(argsStart == std::string_view::npos)
+        return { tagName, {} };
+    
+    // Return the trimmed tag name and its arguments
+    return { tagName, tagArgs.substr(argsStart) };
+}
+
+TemplateEngine::TagResult TemplateEngine::ProcessTag(
+    CompilationContext& context, std::string_view line
 )
 {
-    std::size_t tagPos = line.find("{% include");
-    if(tagPos == std::string::npos)
-        return LineResult::REGULAR_LINE;
+    auto [tagName, tagArgs] = ExtractTag(line);
 
-    std::size_t tagEnd = line.find("%}", tagPos);
-    if(tagEnd == std::string::npos)
-        return LineResult::FAILURE;
+    // Empty tags are not allowed
+    if(tagName.empty()) {
+        logger_.Error("[TemplateEngine].[ParsingError]: Empty tags are not allowed");
+        return TagResult::FAILURE;
+    }
 
-    std::string tagBody = line.substr(tagPos + 2, tagEnd - (tagPos + 2));
-    TrimInline(tagBody);
+    // --- Skip Mode ---
+    if(context.skipUntilFlag) {
+        if(tagName == "endblock")
+            context.skipUntilFlag = false;
 
-    std::size_t q1 = tagBody.find_first_of("'\"");
-    std::size_t q2 = tagBody.find_last_of("'\"");
-    if(q1 == std::string::npos || q2 <= q1)
-        return LineResult::FAILURE;
+        return TagResult::SUCCESS; // Discard everything while skipping
+    }
 
-    std::string includePath = tagBody.substr(q1 + 1, q2 - q1 - 1);
-    context.foundInclude = true;
-    return PushInclude(context, includePath) ? LineResult::PROCESSED_INCLUDE : LineResult::FAILURE;
+    // --- {% endblock %} ---
+    if(tagName == "endblock") {
+        // Endblock doesn't take in arguments
+        if(!tagArgs.empty()) {
+            logger_.Error(
+                "[TemplateEngine].[ParsingError]: {%% endblock %%} does not take any arguments, found: ", tagArgs
+            );
+            return TagResult::FAILURE;
+        }
+
+        if(!context.inBlock) {
+            logger_.Error(
+                "[TemplateEngine].[ParsingError]: {%% endblock %%} found without its corresponding {%% block ... %%}"
+            );
+            return TagResult::FAILURE;
+        }
+
+        // Trim the content a bit for cleaner output
+        TrimInline(context.currentBlockContent);
+
+        context.inBlock = false;
+        context.childBlocks[std::move(context.currentBlockName)] = std::move(context.currentBlockContent);
+        context.currentBlockName.clear();
+        context.currentBlockContent.clear();
+
+        return TagResult::SUCCESS; // Skip writing
+    }
+
+    // --- {% extends ... %} ---
+    if(tagName == "extends") {
+        if(tagArgs.empty()) {
+            logger_.Error(
+                "[TemplateEngine].[ParsingError]: {%% extends ... %%} expects a file name as an argument, found nothing"
+            );
+            return TagResult::FAILURE;
+        }
+
+        std::size_t q1 = tagArgs.find_first_of("'\"");
+        std::size_t q2 = tagArgs.find_last_of("'\"");
+        
+        if(q1 == std::string::npos || q2 <= q1) {
+            logger_.Error(
+                "[TemplateEngine].[ParsingError]: {%% extends ... %%} got an improperly formatted file name."
+                " Usage example: {%% extends 'base.html' %%}"
+            );
+            return TagResult::FAILURE;
+        }
+
+        // The order of operations for extends is different from include
+        // We want current file to be processed first before the parent file does
+        // Unlike include where parent file is processed first
+        context.currentExtendsName = std::string(tagArgs.substr(q1 + 1, q2 - q1 - 1));;
+        context.foundCompilingCode = true;
+
+        return TagResult::SUCCESS;
+    }
+
+    // --- {% block ... %} ---
+    if(tagName == "block") {
+        if(tagArgs.empty()) {
+            logger_.Error(
+                "[TemplateEngine].[ParsingError]: {%% block ... %%} expects an identifier as an argument, found nothing"
+            );
+            return TagResult::FAILURE;
+        }
+
+        std::string blockName = std::string(tagArgs);
+
+        // Try to find the current block in the block list, if u can, substitute it
+        auto it = context.childBlocks.find(blockName);
+        if(it != context.childBlocks.end()) {
+            SafeWrite(context.io, it->second.data(), it->second.size());
+            context.skipUntilFlag = true; // Now just skip everything until endblock
+            return TagResult::SUCCESS;
+        }
+
+        // Now in another case, we would want to substitute the original content inplace-
+        // -if we couldn't find a replacement above, that is if we are in original parent file now
+        if(context.currentExtendsName.empty()) {
+            context.inBlock = true;
+            return TagResult::SUCCESS;
+        }
+
+        // Else create a new block
+        context.inBlock            = true;
+        context.foundCompilingCode = true;
+        context.currentBlockName   = std::move(blockName);
+        context.currentBlockContent.clear();
+
+        return TagResult::SUCCESS; // Don't write line yet
+    }
+
+    // --- {% include ... %} ---
+    if(tagName == "include") {
+        if(tagArgs.empty()) {
+            logger_.Error(
+                "[TemplateEngine].[ParsingError]: {%% include ... %%} expects a file name as an argument, found nothing"
+            );
+            return TagResult::FAILURE;
+        }
+
+        std::size_t q1 = tagArgs.find_first_of("'\"");
+        std::size_t q2 = tagArgs.find_last_of("'\"");
+    
+        if(q1 == std::string::npos || q2 <= q1) {
+            logger_.Error(
+                "[TemplateEngine].[ParsingError]: {%% include ... %%} got an improperly formatted file name."
+                " Usage example: {%% include 'base.html' %%}"
+            );
+            return TagResult::FAILURE;
+        }
+
+        std::string includePath = std::string(tagArgs.substr(q1 + 1, q2 - q1 - 1));
+        context.foundCompilingCode = true;
+
+        return PushFile(context, includePath)
+                ? TagResult::CONTROL_TO_ANOTHER_FILE
+                : TagResult::FAILURE;
+    }
+
+    // Unknown tags are not allowed
+    logger_.Error("[TemplateEngine].[ParsingError]: Unknown tag found: ", tagName);
+    return TagResult::FAILURE;
 }
 
 // vvv IO Functions vvv
