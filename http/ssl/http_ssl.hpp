@@ -27,7 +27,8 @@ enum class SSLReturn : std::uint8_t {
     WANT_WRITE,
     CLOSED,
     SYSCALL,
-    FATAL
+    FATAL,
+    NO_IMPL
 };
 
 struct SSLResult {

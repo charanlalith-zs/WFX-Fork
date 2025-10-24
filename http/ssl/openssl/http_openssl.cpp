@@ -200,14 +200,12 @@ SSLResult HttpOpenSSL::WriteFile(void* conn, SSLSocket fd, FileOffset offset, st
 {
     // Windows version does not contain SSL_sendfile, we need to use Write to send files
 #ifdef _WIN32
-    static_assert(false, "Implement HttpOpenSSL.WriteFile function for Windows");
+    return { SSLReturn::NO_IMPL, 0 };
 #else
     // SSL_sendfile can only be used with ktls enabled
-    if(!useKtls) {
-        Logger::GetInstance()
-            .Error("[HttpOpenSSL]: Enable KTLS, WriteFile does not have a backup implementation rn");
-        return { SSLReturn::FATAL, 0 };
-    }
+    // Return 'NO_IMPL' to tell backend to switch to using Write
+    if(!useKtls)
+        return { SSLReturn::NO_IMPL, 0 };
 
     SSL*    ssl = static_cast<SSL*>(conn);
     ssize_t ret = SSL_sendfile(ssl, fd, offset, count, 0);

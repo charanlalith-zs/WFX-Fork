@@ -74,6 +74,7 @@ void ConnectionContext::ResetContext()
     isFileOperation    = 0;
     isStreamOperation  = 0;
     isShuttingDown     = 0;
+    streamChunked      = 0;
     connInfo           = WFXIpAddress{};
     expectedBodyLength = 0;
     eventType          = EventType::EVENT_ACCEPT;
@@ -93,6 +94,7 @@ void ConnectionContext::ClearContext()
 
     isFileOperation    = 0;
     isStreamOperation  = 0;
+    streamChunked      = 0;
     expectedBodyLength = 0;
     trackBytes         = 0;
     // eventType          = EventType::EVENT_ACCEPT;

@@ -97,20 +97,23 @@ struct ConnectionTag {
 };
 
 struct ConnectionContext : public ConnectionTag {
-    // ------------------------------------------ // 1 byte from ConnectionTag
-    struct {
-        std::uint8_t parseState        : 3;       // --
-        std::uint8_t connectionState   : 2;       //  |
-        std::uint8_t isStreamOperation : 1;       //  |
-        std::uint8_t isFileOperation   : 1;       //  |
-        std::uint8_t isShuttingDown    : 1;       //  v
-    };                                            // 1 byte
+    // ------------------------------------------  // 1 byte from ConnectionTag
+    bool handshakeDone = false;                    // 1 byte
 
-    bool          handshakeDone       = false;    // 1 byte
-    std::uint32_t trackBytes          = 0;        // 4 bytes
-    void*         sslConn             = nullptr;  // 8 bytes
+    struct {
+        std::uint16_t parseState        : 3;       // --
+        std::uint16_t connectionState   : 2;       //  |
+        std::uint16_t isStreamOperation : 1;       //  |
+        std::uint16_t isFileOperation   : 1;       //  |
+        std::uint16_t isShuttingDown    : 1;       //  |
+        std::uint16_t streamChunked     : 1;       //  |
+        std::uint16_t __pad             : 7;       //  V
+    };                                             // 2 byte
+
+    std::uint32_t trackBytes = 0;                  // 4 bytes
+    void*         sslConn    = nullptr;            // 8 bytes
     
-    WFX::Utils::RWBuffer rwBuffer;                // 16 bytes
+    WFX::Utils::RWBuffer rwBuffer;                 // 16 bytes
     
     std::uint32_t   expectedBodyLength = 0;        // 4 bytes
     WFXSocket       socket             = -1;       // 4 | 8 bytes
@@ -152,7 +155,7 @@ public:
     virtual void WriteFile(ConnectionContext* ctx, std::string path) = 0;
 
     // Stream data to socket via a generator function (Async)
-    virtual void Stream(ConnectionContext* ctx, StreamGenerator generator) = 0;
+    virtual void Stream(ConnectionContext* ctx, StreamGenerator generator, bool streamChunked = true) = 0;
 
     // Close a client socket
     virtual void Close(ConnectionContext* ctx, bool forceClose = false) = 0;

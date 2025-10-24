@@ -23,7 +23,8 @@ using BodyType = std::variant<std::monostate, std::string_view, std::string, Str
 enum class OperationType : std::uint8_t {
     TEXT,
     FILE,
-    STREAM
+    STREAM_CHUNKED,
+    STREAM_FIXED
 };
 
 struct HttpResponse {
@@ -31,8 +32,9 @@ public:
     HttpResponse& Status(HttpStatus code);
     HttpResponse& Set(std::string&& key, std::string&& value);
 
-    bool IsFileOperation()   const;
-    bool IsStreamOperation() const;
+    bool          IsFileOperation()   const;
+    bool          IsStreamOperation() const;
+    OperationType GetOperation()      const;
 
     void SendText(const char* cstr);
     void SendText(std::string&& str);
@@ -49,7 +51,7 @@ public:
     // Stream API
     void StreamFile(const char* cstr, bool autoHandle404);
     void StreamFile(std::string&& path, bool autoHandle404);
-    void Stream(StreamGenerator generator, bool skipChecks = false);
+    void Stream(StreamGenerator generator, bool streamChunked = true, bool skipChecks = false);
 
 private:
     void SetTextBody(std::string&& text, const char* contentType);

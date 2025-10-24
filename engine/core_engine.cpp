@@ -152,15 +152,18 @@ void CoreEngine::HandleResponse(HttpResponse& res, ConnectionContext* ctx, bool 
             if(res.IsFileOperation())
                 connHandler_->WriteFile(ctx, std::move(bodyView));
             else if(res.IsStreamOperation())
-                connHandler_->Stream(ctx, std::move(std::get<StreamGenerator>(res.body)));
+                connHandler_->Stream(
+                    ctx, std::move(std::get<StreamGenerator>(res.body)),
+                    res.GetOperation() == OperationType::STREAM_CHUNKED
+                );
             else
-                connHandler_->Write(ctx, std::string_view{});
+                connHandler_->Write(ctx, {});
 
             return;
 
         // TODO: For insufficient cases, we need to be able to stream the remaining response
         case SerializeResult::SERIALIZE_BUFFER_INSUFFICIENT:
-            connHandler_->Write(ctx, std::string_view{});
+            connHandler_->Write(ctx, {});
             return;
 
         default:

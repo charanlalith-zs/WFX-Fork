@@ -51,7 +51,7 @@ using SendTemplateRvalueFn    = SendFileRvalueFn;
 // Stream API
 using StreamFileCStrFn   = SendFileCStrFn;
 using StreamFileRvalueFn = SendFileRvalueFn;
-using StreamFn           = void (*)(HttpResponse* backend, StreamGenerator generator);
+using StreamFn           = void (*)(HttpResponse* backend, StreamGenerator generator, bool streamChunked);
 
 // vvv API declarations vvv
 struct HTTP_API_TABLE {

@@ -45,9 +45,9 @@ public:
     void SendTemplate(std::string&& path, bool autoHandle404 = true) { httpApi_->SendTemplateMove(backend_, std::move(path), autoHandle404); }
 
     // Stream API
-    void Stream(StreamGenerator generator) { httpApi_->Stream(backend_, std::move(generator)); }
-    void StreamFile(const char* path, bool autoHandle404 = true)   { httpApi_->StreamFileCStr(backend_, path, autoHandle404); }
-    void StreamFile(std::string&& path, bool autoHandle404 = true) { httpApi_->StreamFileMove(backend_, std::move(path), autoHandle404); }
+    void Stream(StreamGenerator generator, bool streamChunked = true) { httpApi_->Stream(backend_, std::move(generator), streamChunked); }
+    void StreamFile(const char* path, bool autoHandle404 = true)      { httpApi_->StreamFileCStr(backend_, path, autoHandle404); }
+    void StreamFile(std::string&& path, bool autoHandle404 = true)    { httpApi_->StreamFileMove(backend_, std::move(path), autoHandle404); }
 
 private:
     ResponsePtr backend_;

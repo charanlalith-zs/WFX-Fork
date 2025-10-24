@@ -201,7 +201,7 @@ void EpollConnectionHandler::WriteFile(ConnectionContext* ctx, std::string path)
     Write(ctx, {});
 }
 
-void EpollConnectionHandler::Stream(ConnectionContext* ctx, StreamGenerator generator)
+void EpollConnectionHandler::Stream(ConnectionContext* ctx, StreamGenerator generator, bool streamChunked)
 {
     // Sanity checks
     if(!generator) {
@@ -217,6 +217,7 @@ void EpollConnectionHandler::Stream(ConnectionContext* ctx, StreamGenerator gene
     // -and mark it as stream operation, so when 'Write' completes, it should-
     // -start the streaming process
     ctx->isStreamOperation = 1;
+    ctx->streamChunked     = streamChunked;
     Write(ctx, {});
 }
 
@@ -665,6 +666,12 @@ void EpollConnectionHandler::SendFile(ConnectionContext* ctx)
             continue;
 
         if(n < 0) {
+            // Check if we are switching to streaming mode
+            if(n == SWITCH_FILE_TO_STREAM) {
+                ResumeStream(ctx);
+                return;
+            }
+
             // Partial progress, wait for EPOLLOUT again
             if(errno == EAGAIN || errno == EWOULDBLOCK)
                 PollAgain(ctx, EventType::EVENT_SEND_FILE, EPOLLOUT | EPOLLET);
@@ -717,11 +724,11 @@ void EpollConnectionHandler::ResumeStream(ConnectionContext* ctx)
         return;
     }
 
-    // The format for chunk is:
+    // The format for chunk is (if framing is true):
     // <Chunk Size in Hex> \r\n [3 - 10 bytes]
     // <Chunk> \r\n             [2 bytes]
-    char*       chunkPtr = writeRegion.ptr + chunkHeaderReserve;
-    std::size_t chunkCap = writeRegion.len - chunkHeaderReserve - 2;
+    char*       chunkPtr = !ctx->streamChunked ? writeRegion.ptr : writeRegion.ptr + chunkHeaderReserve;
+    std::size_t chunkCap = !ctx->streamChunked ? writeRegion.len : writeRegion.len - chunkHeaderReserve - 2;
 
     auto streamResult = ctx->streamGenerator({ chunkPtr, chunkCap });
 
@@ -731,42 +738,51 @@ void EpollConnectionHandler::ResumeStream(ConnectionContext* ctx)
     switch(streamResult.action)
     {
         case StreamAction::CONTINUE:
+        {
             // The actual rwbuffer allows chunks only upto uint32 max only, if its 0 or > uint32 max-
             // -its an invalid / corrupted output, 'Close' connection
-            if(streamResult.writtenBytes == 0 || streamResult.writtenBytes > UINT32_MAX)
+            if(streamResult.writtenBytes == 0 || streamResult.writtenBytes > UINT32_MAX) {
                 Close(ctx);
-            else {
-                // Write chunk header to an intermediate buffer first
-                char chunkHeader[chunkHeaderReserve + 1] = { 0 };
-                int headerLen = snprintf(
-                    chunkHeader, chunkHeaderReserve, "%zX\r\n", streamResult.writtenBytes
-                );
-                if(headerLen <= 0 || headerLen >= chunkHeaderReserve) {
-                    Close(ctx);
-                    return;
-                }
-
-                // Manually set the amount of bytes that were reserved + written to the buffer
-                // Reason being, we artifically advance write pointer below, for that the data length-
-                // -needs to show the total size of buffer from start to end even if we skipped bytes
-                writeMeta->dataLength = chunkHeaderReserve + streamResult.writtenBytes + 2;
-
-                // So we don't want to leave space between header and chunk start
-                // So write header in reverse order from chunk start going back
-                // Also move the internal write pointer of write buffer to point to the header start
-                // So 'Write' will pickup from where write pointer left off
-                std::memcpy(chunkPtr - headerLen, chunkHeader, headerLen);
-                rwBuffer.AdvanceWriteLength(chunkHeaderReserve - headerLen);
-
-                // Append CRLF after data
-                char* trailer = chunkPtr + streamResult.writtenBytes;
-                *trailer++ = '\r';
-                *trailer++ = '\n';
-
-                Write(ctx);
+                return;
             }
-            return;
 
+            // No need to add all the stuff, just send it as is
+            if(!ctx->streamChunked) {
+                writeMeta->dataLength = streamResult.writtenBytes;
+                Write(ctx);
+                return;
+            }
+
+            // Write chunk header to an intermediate buffer first
+            char chunkHeader[chunkHeaderReserve + 1] = { 0 };
+            int headerLen = snprintf(
+                chunkHeader, chunkHeaderReserve, "%zX\r\n", streamResult.writtenBytes
+            );
+            if(headerLen <= 0 || headerLen >= chunkHeaderReserve) {
+                Close(ctx);
+                return;
+            }
+
+            // Manually set the amount of bytes that were reserved + written to the buffer
+            // Reason being, we artifically advance write pointer below, for that the data length-
+            // -needs to show the total size of buffer from start to end even if we skipped bytes
+            writeMeta->dataLength = chunkHeaderReserve + streamResult.writtenBytes + 2;
+
+            // So we don't want to leave space between header and chunk start
+            // So write header in reverse order from chunk start going back
+            // Also move the internal write pointer of write buffer to point to the header start
+            // So 'Write' will pickup from where write pointer left off
+            std::memcpy(chunkPtr - headerLen, chunkHeader, headerLen);
+            rwBuffer.AdvanceWriteLength(chunkHeaderReserve - headerLen);
+
+            // Append CRLF after data
+            char* trailer = chunkPtr + streamResult.writtenBytes;
+            *trailer++ = '\r';
+            *trailer++ = '\n';
+
+            Write(ctx);
+            return;
+        }
         // Just resume the connection, we are done streaming
         case StreamAction::STOP_AND_ALIVE_CONN:
             ctx->SetConnectionState(ConnectionState::CONNECTION_ALIVE);
@@ -784,14 +800,21 @@ void EpollConnectionHandler::ResumeStream(ConnectionContext* ctx)
     writeMeta->dataLength    = 0;
     writeMeta->writtenLength = 0;
     ctx->isStreamOperation   = 0;
+    ctx->streamChunked       = 0;
     ctx->streamGenerator     = {};
 
-    // Write the final ending chunk
-    const char endChunk[] = "0\r\n\r\n";
-    if(rwBuffer.AppendData(endChunk, sizeof(endChunk) - 1))
-        Write(ctx);
-    else
-        Close(ctx);
+    // Write final chunk or finalize stream
+    if(ctx->streamChunked)
+        rwBuffer.AppendData(CHUNK_END, sizeof(CHUNK_END) - 1)
+            ? Write(ctx)
+            : Close(ctx);
+
+    else if(ctx->GetConnectionState() == ConnectionState::CONNECTION_ALIVE) {
+        ctx->ClearContext();
+        ResumeReceive(ctx);
+    }
+
+    else Close(ctx);
 }
 
 void EpollConnectionHandler::PollAgain(ConnectionContext* ctx, EventType eventType, std::uint32_t events)
@@ -917,6 +940,33 @@ ssize_t EpollConnectionHandler::WrapFile(ConnectionContext* ctx, int fd, off_t* 
     SSLResult result = sslHandler_->WriteFile(ctx->sslConn, fd, offset ? *offset : 0, count);
 
     switch(result.error) {
+        // Switch to streaming mode with Write instead
+        // Stream will uses a non chunked mode of transferring files (cuz we already sent the header)
+        // And we have access to FileInfo struct anyways (its guaranteed initialized so yeah)
+        case SSLReturn::NO_IMPL:
+            ctx->isFileOperation   = 0;
+            ctx->isStreamOperation = 1;
+            ctx->streamChunked     = 0;
+            ctx->streamGenerator   = [
+                fileInfo = ctx->fileInfo
+            ](StreamBuffer buffer) {
+                std::int64_t res = pread(fileInfo->fd, buffer.buffer, buffer.size, fileInfo->offset);
+                // Error or EOF
+                if(res <= 0)
+                    return StreamResult{ 
+                        0, res == 0
+                            ? StreamAction::STOP_AND_ALIVE_CONN
+                            : StreamAction::STOP_AND_CLOSE_CONN
+                    };
+
+                // No error
+                fileInfo->offset += res;
+                return StreamResult{ static_cast<std::size_t>(res), StreamAction::CONTINUE };
+            };
+
+            // Signal to caller that streaming mode is engaged
+            return SWITCH_FILE_TO_STREAM;
+
         case SSLReturn::SUCCESS:
             if(offset)
                 *offset += result.res; // Manually track progress

@@ -33,11 +33,11 @@ public: // Initializing
     void SetReceiveCallback(ReceiveCallback onData)    override;
     
 public: // I/O Operations
-    void ResumeReceive(ConnectionContext* ctx)                       override;
-    void Write(ConnectionContext* ctx, std::string_view buffer = {}) override;
-    void WriteFile(ConnectionContext* ctx, std::string path)         override;
-    void Stream(ConnectionContext* ctx, StreamGenerator generator)   override;
-    void Close(ConnectionContext* ctx, bool forceClose = false)      override;
+    void ResumeReceive(ConnectionContext* ctx)                                         override;
+    void Write(ConnectionContext* ctx, std::string_view buffer = {})                   override;
+    void WriteFile(ConnectionContext* ctx, std::string path)                           override;
+    void Stream(ConnectionContext* ctx, StreamGenerator generator, bool streamChunked) override;
+    void Close(ConnectionContext* ctx, bool forceClose = false)                        override;
     
 public: // Main Functions
     void Run()                                                               override;
@@ -74,6 +74,10 @@ private: // Misc
     bool              useHttps_   = false;
     ReceiveCallback   onReceive_;
     BufferPool        pool_{1, 1024 * 1024, [](std::size_t currSize){ return currSize * 2; }};
+
+private: // Constexpr stuff
+    constexpr static char    CHUNK_END[]           = "0\r\n\r\n";
+    constexpr static ssize_t SWITCH_FILE_TO_STREAM = std::numeric_limits<ssize_t>::min();
 
 private: // Timeout handler
     int        timerFd_ = -1;

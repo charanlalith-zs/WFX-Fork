@@ -68,8 +68,8 @@ const HTTP_API_TABLE* GetHttpAPIV1()
         StreamFileRvalueFn{[](HttpResponse* backend, std::string&& path, bool autoHandle404) {  // StreamFileRvalueFn
             backend->StreamFile(std::move(path), autoHandle404);
         }},
-        [](HttpResponse* backend, StreamGenerator generator) {
-            backend->Stream(std::move(generator));
+        [](HttpResponse* backend, StreamGenerator generator, bool streamChunked) {
+            backend->Stream(std::move(generator), streamChunked);
         },
 
         // Version

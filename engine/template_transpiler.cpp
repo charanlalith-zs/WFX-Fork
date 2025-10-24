@@ -9,7 +9,7 @@ std::uint32_t TemplateEngine::GetVarNameId(IRContext& ctx, const std::string& na
 {
     auto it = ctx.varNameMap.find(name);
     if(it == ctx.varNameMap.end()) {
-        ctx.staticVarNames.push_back(name);
+        ctx.staticVarNames.emplace_back(std::move(name));
         std::uint32_t id = static_cast<std::uint32_t>(ctx.staticVarNames.size() - 1);
         ctx.varNameMap[name] = id;
         return id;

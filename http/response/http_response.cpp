@@ -34,7 +34,10 @@ HttpResponse& HttpResponse::Set(std::string&& key, std::string&& value)
 }
 
 bool HttpResponse::IsFileOperation()   const { return operationType_ == OperationType::FILE; }
-bool HttpResponse::IsStreamOperation() const { return operationType_ == OperationType::STREAM; }
+bool HttpResponse::IsStreamOperation() const { return operationType_ == OperationType::STREAM_CHUNKED
+                                                    || operationType_ == OperationType::STREAM_FIXED; }
+
+OperationType HttpResponse::GetOperation() const { return operationType_; }
 
 // vvv MAIN SHIT BELOW vvv
 // vvv TEXT vvv
@@ -187,18 +190,19 @@ void HttpResponse::StreamFile(std::string&& path, bool autoHandle404)
         // No error
         readOffset_ += res;
         return StreamResult{ static_cast<std::size_t>(res), StreamAction::CONTINUE };
-    }, true);
+    }, true, true);
 }
 
-void HttpResponse::Stream(StreamGenerator generator, bool skipChecks)
+void HttpResponse::Stream(StreamGenerator generator, bool streamChunked, bool skipChecks)
 {
     if(!skipChecks && !std::holds_alternative<std::monostate>(body))
         Logger::GetInstance().Fatal("[HttpResponse]: Stream() called after body already set");
 
     // Set the streaming-specific header
-    headers.SetHeader("Transfer-Encoding", "chunked");
+    if(streamChunked)
+        headers.SetHeader("Transfer-Encoding", "chunked");
 
-    operationType_ = OperationType::STREAM;
+    operationType_ = streamChunked ? OperationType::STREAM_CHUNKED : OperationType::STREAM_FIXED;
     body = std::move(generator);
 }
 
