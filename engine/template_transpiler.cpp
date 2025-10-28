@@ -2,12 +2,11 @@
 #include "config/config.hpp"
 #include "utils/crypt/hash.hpp"
 #include "utils/backport/string.hpp"
-#include <stack>
 
 namespace WFX::Core {
 
 // vvv Helper Functions vvv
-std::uint32_t TemplateEngine::GetVarNameId(IRContext& ctx, const std::string& name)
+std::uint32_t TemplateEngine::GetVarNameId(TranspilationContext& ctx, const std::string& name)
 {
     auto it = ctx.varNameMap.find(name);
     if(it == ctx.varNameMap.end()) {
@@ -19,7 +18,7 @@ std::uint32_t TemplateEngine::GetVarNameId(IRContext& ctx, const std::string& na
     return it->second;
 }
 
-std::uint32_t TemplateEngine::GetConstId(IRContext& ctx, const Value& val)
+std::uint32_t TemplateEngine::GetConstId(TranspilationContext& ctx, const Value& val)
 {
     auto it = ctx.constMap.find(val);
     if(it == ctx.constMap.end()) {
@@ -31,7 +30,9 @@ std::uint32_t TemplateEngine::GetConstId(IRContext& ctx, const Value& val)
     return it->second;
 }
 
-TemplateEngine::TagResult TemplateEngine::ProcessTagIR(IRContext& ctx, std::string_view tagView)
+TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
+    TranspilationContext& ctx, std::string_view tagView
+)
 {
     auto [tagName, tagArgs] = ExtractTag(tagView);
     if(tagName.empty()) {
@@ -44,11 +45,15 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(IRContext& ctx, std::stri
     auto& ifPatchStack = ctx.ifPatchStack;
 
     if(tagName == "var") {
-        std::uint32_t varId = GetVarNameId(ctx, std::string(tagArgs));
+        // Parse the expression, get its index in the rpnPool
+        auto [success, exprIndex] = ParseExpr(ctx, std::string(tagArgs));
+        if(!success)
+            return TagResult::FAILURE;
+
         ir.push_back({
             OpType::VAR,
             false,
-            varId // Payload is std::uint32_t
+            exprIndex // Payload is std::uint32_t (index to RPNBytecode)
         });
     }
     else if(tagName == "if") {
@@ -196,7 +201,9 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(IRContext& ctx, std::stri
 
 // vvv Transpiler Functions vvv
 //  vvv Parsing Functions vvv
-TemplateEngine::ParseResult TemplateEngine::ParseExpr(IRContext& ctx, std::string expression)
+TemplateEngine::ParseResult TemplateEngine::ParseExpr(
+    TranspilationContext& ctx, std::string expression
+)
 {
     RPNBytecode outputQueue;
     std::stack<Legacy::Token> operatorStack;
@@ -241,7 +248,7 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(IRContext& ctx, std::strin
                     !operatorStack.empty()
                     && operatorStack.top().token_type != Legacy::TOKEN_LPAREN
                 )
-                    PopOperator(operatorStack, outputQueue);
+                    if(!PopOperator(operatorStack, outputQueue)) return { false, 0 };
 
                 if(operatorStack.empty()) {
                     logger_.Error("[TemplateEngine].[CodeGen:EP]: Mismatched parentheses, '(' missing ')'");
@@ -253,31 +260,31 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(IRContext& ctx, std::strin
             
             // --- Dot Operator ---
             case Legacy::TOKEN_DOT: {
-                Legacy::Token attrToken = lexer.get_token();
+                // Expect identifier after '.'
+                Legacy::Token attrToken = lexer.peek_next_token();
                 if(attrToken.token_type != Legacy::TOKEN_ID) {
                     logger_.Error("[TemplateEngine].[CodeGen:EP]: Expected identifier after '.'");
                     return { false, 0 };
                 }
 
-                outputQueue.push_back({
-                    RPNOpCode::PUSH_CONST,
-                    GetConstId(ctx, attrToken.token_value)
-                });
+                // Dot behaves as a binary operator
+                std::uint32_t prec       = GetOperatorPrecedence(Legacy::TOKEN_DOT);
+                bool          isRightAsc = IsRightAssociative(Legacy::TOKEN_DOT);
 
-                std::uint32_t prec = GetOperatorPrecedence(token.token_type);
                 while(!operatorStack.empty() && 
-                       operatorStack.top().token_type != Legacy::TOKEN_LPAREN)
+                    operatorStack.top().token_type != Legacy::TOKEN_LPAREN)
                 {
                     std::uint32_t topPrec = GetOperatorPrecedence(operatorStack.top().token_type);
-                    if(topPrec > prec)
-                        PopOperator(operatorStack, outputQueue);
+                    if((topPrec > prec || (topPrec == prec && !isRightAsc))) {
+                        if(!PopOperator(operatorStack, outputQueue))
+                            return { false, 0 };
+                    }
                     else
                         break;
                 }
+
                 operatorStack.push(token);
-                
-                token = lexer.get_token();
-                continue;
+                break;
             }
 
             // --- All Other Operators ---
@@ -296,8 +303,10 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(IRContext& ctx, std::strin
                        operatorStack.top().token_type != Legacy::TOKEN_LPAREN)
                 {
                     std::uint32_t topPrec = GetOperatorPrecedence(operatorStack.top().token_type);
-                    if(topPrec > prec || (topPrec == prec && !isRightAsc))
-                        PopOperator(operatorStack, outputQueue);
+                    if((topPrec > prec || (topPrec == prec && !isRightAsc))) {
+                        if(!PopOperator(operatorStack, outputQueue))
+                            return { false, 0 };
+                    }
                     else
                         break;
                 }
@@ -313,7 +322,8 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(IRContext& ctx, std::strin
             return { false, 0 };
         }
 
-        PopOperator(operatorStack, outputQueue);
+        if(!PopOperator(operatorStack, outputQueue))
+            return { false, 0 };
     }
 
     // Now that 'outputQueue' is complete, hash and pool it
@@ -361,6 +371,21 @@ std::uint32_t TemplateEngine::GetOperatorPrecedence(Legacy::TokenType type)
     }
 }
 
+bool TemplateEngine::PopOperator(std::stack<Legacy::Token>& opStack, RPNBytecode& outputQueue)
+{
+    Legacy::TokenType type = opStack.top().token_type;
+    if(!IsOperator(type)) {
+        logger_.Error("[TemplateEngine].[CodeGen:EP]: Tried to pop non-operator token from stack: ", (int)type);
+        opStack.pop();
+        return false;
+    }
+
+    RPNOpCode op_code = TokenToOpCode(type);
+    outputQueue.push_back({ op_code, 0 });
+    opStack.pop();
+    return true;
+}
+
 bool TemplateEngine::IsOperator(Legacy::TokenType type)
 {
     switch(type) {
@@ -385,25 +410,137 @@ bool TemplateEngine::IsRightAssociative(Legacy::TokenType type)
     return type == Legacy::TOKEN_NOT;
 }
 
-//  vvv Generating Functions vvv
-TemplateEngine::IRCode TemplateEngine::GenerateIRFromTemplate(
-    const std::string& staticHtmlPath
-)
+//  vvv Emitter Functions vvv
+std::string TemplateEngine::GenerateCxxFromRPN(TranspilationContext& ctx, std::uint32_t rpnIndex)
 {
-    auto& fs     = FileSystem::GetFileSystem();
-    auto& config = Config::GetInstance();
+    std::vector<std::vector<std::string>> pathStack;
+    std::vector<std::string>              exprStack;
 
-    std::uint32_t chunkSize = config.miscConfig.templateChunkSize;
+    // Helper lambda to select and get expr from stack
+    auto GetExprFromStack = [&](std::string& out) -> void {
+        if(!exprStack.empty()) {
+            out = std::move(exprStack.back());
+            exprStack.pop_back();
+        }
+        else if(!pathStack.empty()) {
+            const auto& path = pathStack.back();
+            out.reserve(32);
 
-    BaseFilePtr inFile = fs.OpenFileRead(staticHtmlPath.c_str(), true);
+            out = "SafeGetJson(ctx_, {";
 
-    if(!inFile) {
-        logger_.Error("[TemplateEngine].[CodeGen:IR]: Failed to open static file: ", staticHtmlPath);
-        return {};
+            for(std::size_t i = 0; i < path.size(); ++i) {
+                if(i)
+                    out += ", ";
+                out += "\"" + path[i] + "\"";
+            }
+            out += "})";
+            pathStack.pop_back();
+        }
+    };
+
+    for(const auto& op : ctx.rpnPool[rpnIndex]) {
+        switch(op.code) {
+            case RPNOpCode::PUSH_VAR: {
+                pathStack.push_back({ ctx.staticVarNames[op.arg] });
+                break;
+            }
+
+            case RPNOpCode::PUSH_CONST: {
+                const auto& val = ctx.staticConstants[op.arg];
+                if(std::holds_alternative<std::string>(val))
+                    exprStack.push_back("\"" + std::get<std::string>(val) + "\"");
+                else if(std::holds_alternative<std::int64_t>(val))
+                    exprStack.push_back(std::to_string(std::get<std::int64_t>(val)));
+                else if(std::holds_alternative<double>(val))
+                    exprStack.push_back(std::to_string(std::get<double>(val)));
+                else if(std::holds_alternative<bool>(val))
+                    exprStack.push_back(std::get<bool>(val) ? "true" : "false");
+                else
+                    exprStack.push_back("null");
+                break;
+            }
+
+            case RPNOpCode::OP_GET_ATTR: {
+                if(pathStack.size() < 2)
+                    break;
+
+                auto rhs = std::move(pathStack.back()); pathStack.pop_back();
+                auto lhs = std::move(pathStack.back()); pathStack.pop_back();
+
+                lhs.insert(lhs.end(), rhs.begin(), rhs.end());
+                pathStack.push_back(std::move(lhs));
+
+                break;
+            }
+
+            case RPNOpCode::OP_AND:
+            case RPNOpCode::OP_OR:
+            case RPNOpCode::OP_EQ:
+            case RPNOpCode::OP_NEQ:
+            case RPNOpCode::OP_GT:
+            case RPNOpCode::OP_GTE:
+            case RPNOpCode::OP_LT:
+            case RPNOpCode::OP_LTE: {
+                std::string opStr;
+                switch(op.code) {
+                    case RPNOpCode::OP_AND: opStr = "&&"; break;
+                    case RPNOpCode::OP_OR:  opStr = "||"; break;
+                    case RPNOpCode::OP_EQ:  opStr = "=="; break;
+                    case RPNOpCode::OP_NEQ: opStr = "!="; break;
+                    case RPNOpCode::OP_GT:  opStr = ">";  break;
+                    case RPNOpCode::OP_GTE: opStr = ">="; break;
+                    case RPNOpCode::OP_LT:  opStr = "<";  break;
+                    case RPNOpCode::OP_LTE: opStr = "<="; break;
+                    default: break;
+                }
+
+                std::string lhs, rhs;
+
+                GetExprFromStack(rhs);
+                GetExprFromStack(lhs);
+
+                if(!lhs.empty() && !rhs.empty())
+                    exprStack.push_back("(" + lhs + " " + opStr + " " + rhs + ")");
+
+                break;
+            }
+
+            case RPNOpCode::OP_NOT: {
+                std::string out;
+                GetExprFromStack(out);
+                exprStack.push_back("(!" + out + ")");
+                break;
+            }
+
+            default:
+                break;
+        }
     }
 
-    IRContext ctx{std::move(inFile), chunkSize};
-    auto& frame = ctx.frame;
+    // If we have a variable path, collapse to SafeGet
+    if(!pathStack.empty() && !pathStack.back().empty()) {
+        const auto& keys = pathStack.back();
+        std::string outExpr = "SafeGetJson(ctx_, {";
+        
+         for(std::size_t i = 0; i < keys.size(); ++i) {
+            if(i)
+                outExpr += ", ";
+            outExpr += "\"" + keys[i] + "\"";
+        }
+        outExpr += "})";
+        return outExpr;
+    }
+
+    if(exprStack.empty())
+        return "false";
+
+    return exprStack.back();
+}
+
+bool TemplateEngine::GenerateIRFromTemplate(TranspilationContext& ctx, const std::string& staticHtmlPath)
+{
+    auto& frame     = ctx.frame;
+    auto  chunkSize = ctx.chunkSize;
 
     // For convinience + to properly reference tags across boundaries
     const char* bufPtr         = nullptr;
@@ -447,13 +584,13 @@ TemplateEngine::IRCode TemplateEngine::GenerateIRFromTemplate(
 
             if(frame.bytesRead < 0) {
                 logger_.Error("[TemplateEngine].[CodeGen:IR]: Failed to read from flat file: ", staticHtmlPath);
-                return {};
+                return false;
             }
 
             if(frame.bytesRead == 0) {
                 if(!frame.carry.empty()) {
                     logger_.Error("[TemplateEngine].[CodeGen:IR]: Incomplete tag at EOF: ", frame.carry);
-                    return {};
+                    return false;
                 }
                 break;
             }
@@ -497,7 +634,7 @@ TemplateEngine::IRCode TemplateEngine::GenerateIRFromTemplate(
                 logger_.Error(
                     "[TemplateEngine].[CodeGen:IR]: We are in second chunk yet we couldn't find the tag end? Hell nah"
                 );
-                return {};
+                return false;
             }
 
             frame.carry.append(bodyView.data(), tagEnd + 2);
@@ -563,7 +700,7 @@ TemplateEngine::IRCode TemplateEngine::GenerateIRFromTemplate(
 
         __ProcessTag:
             if(ProcessTagIR(ctx, tagView) == TagResult::FAILURE)
-                return {};
+                return false;
 
             frame.carry.clear();
         }
@@ -574,26 +711,233 @@ TemplateEngine::IRCode TemplateEngine::GenerateIRFromTemplate(
 
     if(!ctx.ifPatchStack.empty()) {
         logger_.Error("[TemplateEngine].[CodeGen:IR]: Unmatched 'if' block, missing 'endif'");
-        return {};
+        return false;
     }
 
     // Final check: ensure all patch flags are false
     for(std::size_t i = 0; i < ctx.ir.size(); i++) {
         if(ctx.ir[i].patch) {
             logger_.Error("[TemplateEngine].[CodeGen:IR]: Internal error: Unpatched jump target at state ", i);
-            return {};
+            return false;
         }
     }
 
     logger_.Info("[TemplateEngine].[CodeGen:IR]: Successfully generated IR for: ", staticHtmlPath);
-    return ctx.ir;
+    return true;
 }
 
 bool TemplateEngine::GenerateCxxFromIR(
-    const std::string& outCxxPath, const std::string& funcName, std::vector<Op>&& irCode
+    TranspilationContext& ctx,
+    const std::string& outCxxPath,
+    const std::string& funcName
 )
 {
-    return false;
+    auto& fs      = FileSystem::GetFileSystem();
+    auto  outFile = fs.OpenFileWrite(outCxxPath.c_str());
+
+    if(!outFile) {
+        logger_.Error("[TemplateEngine].[CodeGen:CXX]: Failed to open output file: ", outCxxPath);
+        return false;
+    }
+    
+    // Yeah man this shits getting out of hand atp
+    // Honestly fuck performance here not even going to bother, lets just hope compiler-
+    // -optimizes this shit of a code
+    IOContext ioCtx{std::move(outFile), ctx.chunkSize};
+    const auto& irCode   = ctx.ir;
+    bool needEndingBrace = false;
+    bool writeResult     = true;
+
+    // vvv EMIT HEADER vvv
+    writeResult = SafeWrite(ioCtx, R"(/*
+ * AUTO-GENERATED FILE, DO NOT MODIFY :)
+ */
+#include "engine/template_interface.hpp"
+#include "shared/utils/export_macro.hpp"
+#include <memory>
+#include <variant>
+#include <string>
+#include <vector>
+
+using Json = nlohmann::json;
+
+// Output
+using WFX::Core::TemplateResult;
+using WFX::Core::FileChunk;
+using WFX::Core::VariableChunk;
+
+// Interface
+using WFX::Core::BaseTemplateGenerator;
+
+// Helper Functions
+using WFX::Core::SafeGetJson;
+
+)", 443);
+    if(!writeResult) {
+        logger_.Error("[TemplateEngine].[CodeGen:CXX]: Failed to write cxx header to: ", outCxxPath);
+        return false;
+    }
+
+    // vvv EMIT GENERATOR CLASS vvv
+    std::string generatorClass = 
+        "class CLS" + funcName + " : public BaseTemplateGenerator {\n"
+        "public:\n"
+        "    explicit CLS" + funcName + "(Json&& ctx)\n"
+        "        : ctx_(std::move(ctx)) {}\n\n"
+
+        "    std::size_t GetStateCount() const noexcept override {\n"
+        "        return " + UInt64ToStr(irCode.size()) + ";\n"
+        "    }\n\n"
+
+        "    TemplateResult GetState(std::size_t state) const noexcept override {\n"
+        "        while(true) {\n"
+        "            switch(state) {\n";
+
+    writeResult = SafeWrite(ioCtx, generatorClass.c_str(), generatorClass.size());
+    if(!writeResult) {
+        logger_.Error("[TemplateEngine].[CodeGen:CXX]: Failed to write cxx generator class to: ", outCxxPath);
+        return false;
+    }
+
+    // vvv EMIT IR-BASED SWITCH CASE vvv
+    for(std::size_t i = 0; i < irCode.size(); ++i) {
+        const auto& op = irCode[i];
+
+        // Reset to default states every iteration
+        needEndingBrace = true;
+        writeResult     = true;
+
+        // Initial 'case ...:' line
+        std::string line = "                case " + UInt64ToStr(i) + ":";
+        if(!SafeWrite(ioCtx, line.c_str(), line.size())) {
+            logger_.Error("[TemplateEngine].[CodeGen:CXX]: Failed to write cxx switch case to: ", outCxxPath);
+            return false;
+        }
+
+        switch(op.type) {
+            case OpType::LITERAL: {
+                needEndingBrace = false;
+                auto [off, len] = std::get<LiteralValue>(op.payload);
+
+                line = " return {" + UInt64ToStr(i) +
+                                ", FileChunk{" + UInt64ToStr(off) + ", " +
+                                UInt64ToStr(len) + "}};\n";
+                writeResult = SafeWrite(ioCtx, line.c_str(), line.size());
+
+                break;
+            }
+
+            case OpType::VAR: {
+                needEndingBrace = false;
+                std::uint32_t exprIdx = std::get<std::uint32_t>(op.payload);
+
+                line = " return {" + UInt64ToStr(i) +
+                                ", VariableChunk{ " + GenerateCxxFromRPN(ctx, exprIdx) +
+                                " }};\n";
+                writeResult = SafeWrite(ioCtx, line.c_str(), line.size());
+
+                break;
+            }
+
+            case OpType::IF:
+            case OpType::ELIF: {
+                const auto& [jump, exprIdx] = std::get<ConditionalValue>(op.payload);
+                std::string expr = GenerateCxxFromRPN(ctx, exprIdx);
+
+                line =
+                    " {\n"
+                    "                    if(!(" + expr + ")) {\n"
+                    "                        state = " + UInt64ToStr(jump) + ";\n"
+                    "                        continue;\n"
+                    "                    }\n"
+                    "                    [[fallthrough]];\n";
+                writeResult = SafeWrite(ioCtx, line.c_str(), line.size());
+
+                break;
+            }
+
+            case OpType::ELSE:
+            case OpType::ENDIF: {
+                needEndingBrace = false;
+                writeResult = SafeWrite(ioCtx, "\n", 1);
+                break;
+            }
+
+            case OpType::JUMP: {
+                std::uint32_t jump = std::get<std::uint32_t>(op.payload);
+
+                line =
+                    " {\n"
+                    "                    state = " + UInt64ToStr(jump) + ";\n"
+                    "                    continue;\n";
+                writeResult = SafeWrite(ioCtx, line.c_str(), line.size());
+
+                break;
+            }
+
+            default: {
+                logger_.Error("[TemplateEngine].[CodeGen:CXX]: Unsupported bytecode detected: ", (int)op.type);
+                return false;
+            }
+        }
+
+        if(!writeResult) {
+            logger_.Error("[TemplateEngine].[CodeGen:CXX]: Failed to write cxx expr to: ", outCxxPath);
+            return false;
+        }
+
+        if(needEndingBrace)
+            SafeWrite(ioCtx, "                }\n", 18);
+    }
+
+    // ------------------------------------------------------------------------
+    // Emit class footer
+    // ------------------------------------------------------------------------
+    SafeWrite(ioCtx, 
+R"(                default:
+                    return {state, std::monostate{}};
+            }
+        }
+    }
+
+private:
+    Json ctx_;
+};
+)", 137);
+
+    // ------------------------------------------------------------------------
+    // Emit factory
+    // ------------------------------------------------------------------------
+    std::string factory =
+        "\n/*\n * Creates and returns an instance of the template generator\n */"
+        "\nextern \"C\"\nWFX_EXPORT\nstd::unique_ptr<BaseTemplateGenerator> "
+        + funcName + "(Json&& data) {\n"
+        "    return std::make_unique<CLS" + funcName + ">(std::move(data));\n"
+        "}";
+    SafeWrite(ioCtx, factory.c_str(), factory.size());
+
+    // Finalize
+    FlushWrite(ioCtx, true);
+    logger_.Info("[TemplateEngine].[CodeGen:CXX]: Generated C++ source: ", outCxxPath);
+    return true;
+}
+
+bool TemplateEngine::GenerateCxxFromTemplate(
+    const std::string& inHtmlPath, const std::string& outCxxPath, const std::string& funcName
+)
+{
+    auto& fs     = FileSystem::GetFileSystem();
+    auto& config = Config::GetInstance();
+
+    std::uint32_t chunkSize = config.miscConfig.templateChunkSize;
+    BaseFilePtr   inFile    = fs.OpenFileRead(inHtmlPath.c_str(), true);
+    
+    TranspilationContext ctx{std::move(inFile), chunkSize};
+
+    if(!GenerateIRFromTemplate(ctx, inHtmlPath))
+        return false;
+
+    return GenerateCxxFromIR(ctx, outCxxPath, funcName);
 }
 
 //  vvv Helper Functions vvv
@@ -611,16 +955,9 @@ TemplateEngine::RPNOpCode TemplateEngine::TokenToOpCode(Legacy::TokenType type)
         case Legacy::TOKEN_NOT:  return RPNOpCode::OP_NOT;
         case Legacy::TOKEN_DOT:  return RPNOpCode::OP_GET_ATTR;
         default:
-            logger_.Fatal("[TemplateEngine].[CodeGen:EP]: Unknown operator token type");
+            logger_.Fatal("[TemplateEngine].[CodeGen:EP]: Unknown operator type: ", (int)type);
             return RPNOpCode::OP_AND; // Just to suppress compiler warning
     }
-}
-
-void TemplateEngine::PopOperator(std::stack<Legacy::Token>& opStack, RPNBytecode& outputQueue)
-{
-    RPNOpCode op_code = TokenToOpCode(opStack.top().token_type);
-    outputQueue.push_back({op_code, 0});
-    opStack.pop();
 }
 
 std::uint64_t TemplateEngine::HashBytecode(const RPNBytecode& rpn)

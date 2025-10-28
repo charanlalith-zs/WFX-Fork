@@ -286,10 +286,11 @@ void TemplateEngine::PreCompileTemplates()
             // Define path for the new .cpp file
             std::string cppPath = dynamicCppOutputDir + "/" + relPath + ".cpp";
 
-            auto irCode = GenerateIRFromTemplate(outPath);
-            if(!irCode.empty())
+            if(GenerateCxxFromTemplate(outPath, cppPath, funcName))
                 logger_.Info("[TemplateEngine-Debug]: Output function name: ", funcName, ", Output path: ", cppPath);
-        }
+            else
+                errors++;
+            }
     });
 
     if(errors > 0)

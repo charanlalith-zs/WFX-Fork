@@ -58,7 +58,7 @@ private: // Nested helper types for the parser
         ELIF,    // Conditional jump
         ELSE,    // Marker for 'else' block
         ENDIF,   // Marker for 'endif'
-        JUMP     // Unconditional jump (used to skip past elif/else)
+        JUMP,    // Unconditional jump (used to skip past elif/else)
     };
 
     // OpCode for RPN State Machine
@@ -164,7 +164,7 @@ private: // Nested helper types for the parser
 
         std::variant<
             std::monostate,   // For JUMP, ELSE, ENDIF
-            std::uint32_t,    // For VAR (stores varId), JUMP (stored unconditional jump offset)
+            std::uint32_t,    // For VAR (stores expr_index), JUMP (stored unconditional jum_offset)
             LiteralValue,     // For LITERAL (stores offset, length)
             ConditionalValue  // For IF, ELIF (stores the jump_state, expr_index)
         > payload{};
@@ -172,12 +172,12 @@ private: // Nested helper types for the parser
 
     using IRCode = std::vector<Op>;
 
-    struct IRContext {
+    struct TranspilationContext {
         TemplateFrame frame;
         IRCode        ir;
 
         std::stack<std::vector<std::uint32_t>> ifPatchStack;
-        
+
         // Optimization ig
         std::unordered_map<std::string, std::uint32_t> varNameMap;
         std::unordered_map<std::size_t, std::uint32_t> rpnMap;
@@ -188,10 +188,10 @@ private: // Nested helper types for the parser
 
         std::uint64_t currentLiteralStartOffset = 0;
         std::uint64_t currentLiteralLength      = 0;
-        std::uint32_t currentState              = 0;
+        std::uint32_t chunkSize                 = 0;
 
-        IRContext(BaseFilePtr in, std::uint32_t chunk)
-            : frame(std::move(in), chunk)
+        TranspilationContext(BaseFilePtr in, std::uint32_t chunk)
+            : frame(std::move(in), chunk), chunkSize(chunk)
         {}
     };
 
@@ -200,26 +200,34 @@ private: // Helper functions
     bool           PushFile(CompilationContext& context, const std::string& relPath);
     Tag            ExtractTag(std::string_view line);
     TagResult      ProcessTag(CompilationContext& context, std::string_view tagView);
-    TagResult      ProcessTagIR(IRContext& ctx, std::string_view tagView);
-    std::uint32_t  GetVarNameId(IRContext& ctx, const std::string& name);
-    std::uint32_t  GetConstId(IRContext& ctx, const Value& val);
+    TagResult      ProcessTagIR(TranspilationContext& ctx, std::string_view tagView);
+    std::uint32_t  GetVarNameId(TranspilationContext& ctx, const std::string& name);
+    std::uint32_t  GetConstId(TranspilationContext& ctx, const Value& val);
 
 private: // Transpiler Functions (Impl in template_transpiler.cpp)
     // Parsing Functions
-    ParseResult   ParseExpr(IRContext& ctx, std::string expression);
+    ParseResult   ParseExpr(TranspilationContext& ctx, std::string expression);
     std::uint32_t GetOperatorPrecedence(Legacy::TokenType type);
+    bool          PopOperator(std::stack<Legacy::Token>& opStack, RPNBytecode& outputQueue);
     bool          IsOperator(Legacy::TokenType type);
     bool          IsRightAssociative(Legacy::TokenType type);
 
-    // Generating Functions
-    IRCode GenerateIRFromTemplate(const std::string& staticHtmlPath);
+    // Emitter Functions
+    std::string GenerateCxxFromRPN(
+        TranspilationContext& ctx, std::uint32_t rpnIndex
+    );
+    bool GenerateIRFromTemplate(
+        TranspilationContext& ctx, const std::string& staticHtmlPath
+    );
     bool GenerateCxxFromIR(
-        const std::string& outCxxPath, const std::string& funcName, std::vector<Op>&& irCode
+        TranspilationContext& ctx, const std::string& outCxxPath, const std::string& funcName
+    );
+    bool GenerateCxxFromTemplate(
+        const std::string& inHtmlPath, const std::string& outCxxPath, const std::string& funcName
     );
 
     // Helper Functions
     RPNOpCode     TokenToOpCode(Legacy::TokenType type);
-    void          PopOperator(std::stack<Legacy::Token>& opStack, RPNBytecode& outputQueue);
     std::uint64_t HashBytecode(const RPNBytecode& rpn);
 
 private: // IO functions
@@ -247,7 +255,7 @@ private: // For ease of use across functions
     constexpr static const char*      dynamicCppFolder_ = "/build/templates/dynamic/cxx";
     constexpr static const char*      dynamicObjFolder_ = "/build/templates/dynamic/objs";
 
-    constexpr static const char*      dynamicTemplateFuncPrefix_ = "__WFXRender_";
+    constexpr static const char*      dynamicTemplateFuncPrefix_ = "__TmplSM_";
 
 private: // Storage
     Logger& logger_ = Logger::GetInstance();
