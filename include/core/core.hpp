@@ -4,7 +4,7 @@
 #include "shared/apis/master_api.hpp"
 
 // Shared extern API table
-extern const WFX::Shared::MASTER_API_TABLE* __wfx_api;
+extern const WFX::Shared::MASTER_API_TABLE* __WFXApi;
 
 // vvv SHARED MACRO HELPERS vvv
 #define WFX_CONCAT_INNER(a, b) a##b

@@ -533,7 +533,7 @@ bool EpollConnectionHandler::SetNonBlocking(int fd)
 
 bool EpollConnectionHandler::EnsureFileReady(ConnectionContext* ctx, std::string path)
 {
-    auto [fd, size] = fileCache_->GetFileDesc(std::move(path));
+    auto [fd, size] = fileCache_.GetFileDesc(std::move(path));
     if(fd < 0)
         return false;
 
@@ -556,7 +556,7 @@ bool EpollConnectionHandler::EnsureReadReady(ConnectionContext* ctx)
     if(rwBuffer.IsReadInitialized())
         return true;
 
-    if(!rwBuffer.InitReadBuffer(pool_, netCfg.bufferIncrSize)) {
+    if(!rwBuffer.InitReadBuffer(netCfg.bufferIncrSize)) {
         logger_.Error("[Epoll]: Failed to init read buffer");
         Close(ctx);
         return false;
@@ -638,8 +638,17 @@ void EpollConnectionHandler::Receive(ConnectionContext* ctx)
     }
 
     // Notify app
-    if(gotData)
+    if(gotData) {
+        // auto task = onReceive_(ctx);
+
+        // // Start it immediately
+        // task.RunUntilSuspend();
+
+        // // Store for resuming later
+        // if(!task.IsDone())
+        //     ctx->masterCoroutine = std::move(task);
         onReceive_(ctx);
+    }
 }
 
 void EpollConnectionHandler::SendFile(ConnectionContext* ctx)

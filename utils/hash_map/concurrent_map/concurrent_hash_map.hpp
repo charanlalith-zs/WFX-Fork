@@ -13,8 +13,8 @@ class ConcurrentHashMap {
     static_assert((BUCKET_COUNT & (BUCKET_COUNT - 1)) == 0, "BUCKET_COUNT must be a power of 2");
 
 public:
-    explicit ConcurrentHashMap(std::size_t poolSize = 512 * 1024)
-        : bufferPool_(1, poolSize, [](std::size_t cur){ return cur * 1.5; })
+    explicit ConcurrentHashMap(BufferPool& pool)
+        : bufferPool_(pool)
     {
         for(std::size_t i = 0; i < SHARD_COUNT; ++i) {
             auto shard = std::make_unique<Shard>(bufferPool_);
@@ -127,10 +127,6 @@ public:
     }
 
 private:
-    BufferPool bufferPool_;
-    std::array<std::unique_ptr<Shard>, SHARD_COUNT> shards_;
-
-private:
     inline std::size_t GetShardIndex(const K& key) const
     {
         std::size_t h = WFXHash(key);
@@ -146,6 +142,10 @@ private:
     {
         return *shards_[GetShardIndex(key)];
     }
+
+private:
+    BufferPool& bufferPool_;
+    std::array<std::unique_ptr<Shard>, SHARD_COUNT> shards_;
 };
 
 } // namespace WFX::Utils

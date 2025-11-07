@@ -19,8 +19,8 @@
 
 namespace WFX::CLI {
 
-using namespace WFX::Http;  // For 'WFXGlobalState'
-using namespace WFX::Utils; // For 'Logger'
+using namespace WFX::Http;  // For 'WFXGlobalState', ...
+using namespace WFX::Utils; // For 'Logger', 'BufferPool', 'FileCache', ...
 
 int RunDevServer(const ServerConfig& cfg)
 {
@@ -62,11 +62,6 @@ int RunDevServer(const ServerConfig& cfg)
     // Handle initialization of SSL key before we do anything else
     if(!RandomPool::GetInstance().GetBytes(globalState.sslKey.data(), globalState.sslKey.size()))
         logger.Fatal("[WFX-Master]: Failed to initialize SSL key");
-
-    // Create a master FileCache used throught the code
-    // This works because master process ain't gon die before worker processes
-    FileCache masterCache{config.miscConfig.fileCacheSize};
-    globalState.fileCache = &masterCache;
 
     // -------------------- TEMPLATE COMPILATION PHASE --------------------
     auto& templateEngine = TemplateEngine::GetInstance();
@@ -120,6 +115,10 @@ int RunDevServer(const ServerConfig& cfg)
                 setpgid(0, 0);          // First worker becomes group leader
             else
                 setpgid(0, globalState.workerPGID); // Join first worker's group
+
+            // For every process initialize its own BufferPool and FileCache
+            BufferPool::GetInstance().Init(1024 * 1024, [](std::size_t curSize) { return curSize * 2; });
+            FileCache::GetInstance().Init(config.miscConfig.fileCacheSize);
 
             WFX::Core::CoreEngine engine{dllPathCStr, useHttps};
             globalState.enginePtr = &engine;

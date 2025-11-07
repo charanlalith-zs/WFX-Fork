@@ -1,2 +1,70 @@
 # WFX
-## A website framework which aims to be like a combination of Django + ExpressJS while being really simple to use.
+
+> Scene opens: two developers staring at a terminal. One of them hasn't slept in 36 hours :(
+
+**Dev 1:** Dawg... what even *is* this thing?<br>
+**Dev 2:** Haven't you heard about it?<br>
+**Dev 1:** No? Tf is WFX?<br>
+**Dev 2:** Weird Framework<br>
+**Dev 1:** ...wat?<br>
+**Dev 2:** eXactly (.\_.)<br>
+**Dev 1:** (.\_.)<br>
+
+**Silence...** <br>The fans sound like a jet engine. The build somehow finishes.
+Somewhere, a socket coughs itself awake.
+No logs, no confetti, just a binary sitting there opening its eyes for the first time.
+
+## Architecture
+
+Everything runs on one event loop.  
+Epoll / IoUring / IOCP is the heartbeat.  
+
+## Folder Structure
+
+**cli/** - command-line tools: build, new, dev, doctor<br>
+**config/** - TOML loader<br>
+**engine/** - runtime core, template execution<br>
+**http/** - routing, parser, serializer, response machinery, etc.<br>
+**os_specific/** - Linux and Windows platform code<br>
+**shared/** - internal shared logic<br>
+**include/** - public headers for user extensions<br>
+
+## Shared Libraries (`lib/`)
+
+Each shared module is self-contained and linked into the core runtime.
+
+- **utils/** - logging, crypto, memory, file I/O, etc.<br>
+- **async/** - custom coroutine functions without the use of C++20 stuff.<br>
+
+## Build
+
+Follow each command step by step to build the engine binary:
+
+```bash
+ - git clone https://github.com/Altered-commits/WFX.git
+ - cd wfx
+ - cmake -S . -B build
+ - cmake --build build
+```
+
+Now that the engine binary has been created, follow these steps to use `wfx`:
+
+#### OS-Specific Commands
+
+#### Linux / macOS
+```bash
+ - mv wfx ..
+ - cd ..
+```
+#### Windows (PowerShell)
+```bash
+ - Move-Item wfx ..
+ - Set-Location ..
+```
+#### Windows (CMD)
+```bash
+ - move wfx ..
+ - cd ..
+```
+
+Now you can start using `wfx` :)

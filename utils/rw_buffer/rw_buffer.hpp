@@ -3,14 +3,13 @@
 
 #include "utils/buffer_pool/buffer_pool.hpp"
 
-// Layout explanation:
+// Layout:
 //
 // [ WriteMetadata | WriteBuffer ]
-// [ ReadMetadata(+BufferPool ptr) | ReadBuffer ]
+// [ ReadMetadata  | ReadBuffer  ]
 //
-// Write buffer is constant-sized (per connection setup).
-// Read buffer is dynamically grown/shrunk.
-// Read metadata stores BufferPool* for independent memory management.
+// Write buffer is constant-sized
+// Read buffer is dynamically grown/shrunk
 
 namespace WFX::Utils {
 
@@ -31,17 +30,16 @@ struct alignas(8) WriteMetadata {
 struct alignas(8) ReadMetadata {
     std::uint32_t bufferSize = 0;
     std::uint32_t dataLength = 0;
-    BufferPool*   poolPtr    = nullptr;
 };
 
 class alignas(16) RWBuffer {
 public:
-    RWBuffer() = default;
+    RWBuffer();
     ~RWBuffer();
 
 public: // Init / Reset
     bool InitWriteBuffer(std::uint32_t size);
-    bool InitReadBuffer(BufferPool& pool, std::uint32_t size);
+    bool InitReadBuffer(std::uint32_t size);
 
     void ResetBuffer();
     void ClearBuffer();

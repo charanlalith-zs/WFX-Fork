@@ -14,7 +14,7 @@
     static struct WFX_MW_CLASS(uniq) {                                 \
         WFX_MW_CLASS(uniq)() {                                         \
             WFX::Shared::__WFXDeferredMiddleware().emplace_back([] {   \
-                __wfx_api->GetHttpAPIV1()->RegisterMiddleware(         \
+                __WFXApi->GetHttpAPIV1()->RegisterMiddleware(         \
                     name, callback                                     \
                 );                                                     \
             });                                                        \

@@ -18,9 +18,24 @@
 namespace WFX::Utils {
 
 // vvv Constructor & Destructor vvvv
-FileCache::FileCache(std::size_t capacity)
-    : minFreq_(0)
+FileCache& FileCache::GetInstance()
 {
+    static FileCache fileCache;
+    return fileCache;
+}
+
+FileCache::~FileCache()
+{
+    for(auto& pair : entries_)
+        CloseFile(pair.second.fd);
+
+    if(!entries_.empty())
+        Logger::GetInstance().Info("[FileCache]: Closed all cached file descriptors successfully");
+}
+
+void FileCache::Init(std::size_t capacity)
+{
+    minFreq_ = 0;
     std::size_t safe = capacity;
 
 #ifndef _WIN32
@@ -31,15 +46,6 @@ FileCache::FileCache(std::size_t capacity)
 #endif
     
     capacity_ = std::min(capacity, safe);
-}
-
-FileCache::~FileCache()
-{
-    for(auto& pair : entries_)
-        CloseFile(pair.second.fd);
-
-    if(!entries_.empty())
-        Logger::GetInstance().Info("[FileCache]: Closed all cached file descriptors successfully");
 }
 
 // vvv User Functions vvv

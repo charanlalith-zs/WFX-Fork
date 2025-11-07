@@ -6,13 +6,14 @@
 #include <vector>
 
 // Forward declare to not create dependency hell
-namespace WFX::Core  { class CoreEngine; class TemplateEngine; }
-namespace WFX::Utils { class FileCache; }
+namespace WFX::Core {
+    class CoreEngine;
+    class TemplateEngine;
+}
 
 namespace WFX::Http {
 
-using namespace WFX::Core;  // For 'CoreEngine', 'TemplateEngine'
-using namespace WFX::Utils; // For 'FileCache'
+using namespace WFX::Core; // For 'CoreEngine', 'TemplateEngine'
 
 using SSLKey = std::array<std::uint8_t, 80>;
 
@@ -20,7 +21,6 @@ struct WFXGlobalState {
     std::atomic<bool> shouldStop        = false;
     CoreEngine*       enginePtr         = nullptr;
     TemplateEngine*   templateEnginePtr = nullptr;
-    FileCache*        fileCache         = nullptr;
     SSLKey            sslKey            = { 0 };
 
 #ifdef _WIN32

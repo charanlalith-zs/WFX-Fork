@@ -26,19 +26,29 @@ class MoveOnlyFunction<R(Args...)> {
 
         R Invoke(Args&&... args) override
         {
-            return f(std::forward<Args>(args)...);
+            if constexpr(std::is_void_v<R>)
+                f(std::forward<Args>(args)...);
+            else
+                return f(std::forward<Args>(args)...);
         }
 
         // This version must NOT call f() if its not const callable
         R InvokeConst(Args&&... args) const override
         {
+            auto call = [&]<typename Func>(Func&& func) -> R {
+                if constexpr(std::is_void_v<R>)
+                    std::forward<Func>(func)(std::forward<Args>(args)...);
+                else
+                    return std::forward<Func>(func)(std::forward<Args>(args)...);
+            };
+
             // Callable supports const operator()
             if constexpr(std::is_invocable_v<const F&, Args...>)
-                return f(std::forward<Args>(args)...);
+                return call(f);
 
-            // Fallback for mutable lambdas, cast away const safely
+            // Safe fallback for mutable lambdas
             else
-                return const_cast<F&>(f)(std::forward<Args>(args)...);
+                return call(const_cast<F&>(f));
         }
     };
 

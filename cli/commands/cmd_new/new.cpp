@@ -101,9 +101,9 @@ cache_chunk_size    = 2048   # Max chunk size to read / write from template cach
 #include <shared/utils/export_macro.hpp>
 
 // WARNING: DO NOT MODIFY THIS SYMBOL OR THIS FILE
-// __wfx_api is reserved for WFX internal API injection
+// __WFXApi is reserved for WFX internal API injection
 // Modifying or redefining it will break the interface between WFX and USER
-const WFX::Shared::MASTER_API_TABLE* __wfx_api = nullptr;
+const WFX::Shared::MASTER_API_TABLE* __WFXApi = nullptr;
 
 // To prevent name mangling 
 extern "C" {
@@ -114,7 +114,7 @@ extern "C" {
             return;
 
         if(api) {
-            __wfx_api = api;
+            __WFXApi = api;
 
             auto& constructors = WFX::Shared::__WFXDeferredConstructors();
             auto& middlewares  = WFX::Shared::__WFXDeferredMiddleware();

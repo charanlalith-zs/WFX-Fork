@@ -26,6 +26,8 @@ public: // Copying is strictly not allowed
     HttpRequest(const HttpRequest&)            = delete;
     HttpRequest& operator=(const HttpRequest&) = delete;
 
+    HttpRequest() = default;
+
 public: // Helper functions
     void ClearInfo()
     {
@@ -48,6 +50,11 @@ public: // Helper functions
             return nullptr;
         
         return std::any_cast<const T>(&(it->second));
+    }
+
+    void EraseContext(const std::string& key) noexcept
+    {
+        context.erase(key);
     }
 };
 

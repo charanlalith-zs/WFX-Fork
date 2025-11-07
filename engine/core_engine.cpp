@@ -1,6 +1,7 @@
 #include "core_engine.hpp"
 
-#include "include/http/response.hpp"
+#include "async/interface.hpp"
+#include "http/response.hpp"
 #include "http/common/http_error_msgs.hpp"
 #include "http/formatters/parser/http_parser.hpp"
 #include "http/formatters/serializer/http_serializer.hpp"
@@ -47,8 +48,12 @@ void CoreEngine::Stop()
 void CoreEngine::HandleRequest(ConnectionContext* ctx)
 {
     // This will be transmitted through all the layers (from here to middleware to user)
-    HttpResponse res;
-    Response userRes{&res, WFX::Shared::GetHttpAPIV1()};
+    if(!ctx->responseInfo)
+        ctx->responseInfo = new HttpResponse{};
+
+    auto* httpApi = WFX::Shared::GetHttpAPIV1();
+    auto& res     = *ctx->responseInfo;
+    Response userRes{&res, httpApi};
 
     HttpParseState state = HttpParser::Parse(ctx);
     auto& networkConfig  = config_.networkConfig;
@@ -107,15 +112,55 @@ void CoreEngine::HandleRequest(ConnectionContext* ctx)
                                     reqInfo.pathSegments
                                 );
 
-                if(!node)
-                    res.Status(HttpStatus::NOT_FOUND).SendText("404: Route not found :(");
+                if(!node) {
+                    res.Status(HttpStatus::NOT_FOUND)
+                        .SendText("404: Route not found :(");
+                    goto __HandleResponse;
+                }
+                                
+                if(!middleware_.ExecuteMiddleware(node, reqInfo, userRes))
+                    goto __HandleResponse;
+
+                // Sync, execute it right now
+                if(auto* sync = std::get_if<SyncCallbackType>(&node->callback))
+                    (*sync)(reqInfo, userRes);
+
+                // Async, check if we have executed it entirely right now, if not-
+                // -schedule it for later
                 else {
-                    // Only execute user callback if middleware chain is successful
-                    if(middleware_.ExecuteMiddleware(node, reqInfo, userRes))
-                        (node->callback)(reqInfo, userRes);
+                    auto& async = std::get<AsyncCallbackType>(node->callback);
+
+                    // Set context (type erased) at http api side before calling async callback
+                    // And also erase it after callback is done, if the callback hasn't finished, the-
+                    // -scheduler will set the ptr later on when needed, no need to keep a dangling pointer
+                    httpApi->SetGlobalPtrData(static_cast<void*>(ctx));
+
+                    auto coro = async(reqInfo, userRes);
+
+                    httpApi->SetGlobalPtrData(nullptr);
+
+                    if(!coro) {
+                        res.Status(HttpStatus::INTERNAL_SERVER_ERROR)
+                            .SendText("[HR]_1Internal Error");
+                        goto __HandleResponse;
+                    }
+
+                    // (Async path)
+                    if(!coro->IsFinished())
+                        return;
+
+                    // So if coroutine is done, then the user defined lambda should be the only thing-
+                    // -existing inside of 'ctx->coroStack'. If anything else remains, thats a big no no
+                    if(ctx->coroStack.size() > 1)
+                        res.Status(HttpStatus::INTERNAL_SERVER_ERROR)
+                            .SendText("[HR]_2Internal Error");
+                    // Ok good, so our async function is complete (sync path), empty out 'ctx->coroStack'
+                    else
+                        ctx->coroStack.clear();
                 }
             }
 
+        __HandleResponse:
             ctx->parseState = static_cast<std::uint8_t>(HttpParseState::PARSE_IDLE);
             connHandler_->RefreshExpiry(ctx, networkConfig.idleTimeout);
 

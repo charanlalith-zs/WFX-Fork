@@ -18,13 +18,16 @@ struct CacheEntry {
 
 class FileCache final {
 public:
-    FileCache(std::size_t capacity);
-    ~FileCache();
+    static FileCache& GetInstance();
+    void Init(std::size_t capacity);
 
 public:
     std::pair<WFXFileDescriptor, WFXFileSize> GetFileDesc(const std::string& path);
 
 private:
+    FileCache() = default;
+    ~FileCache();
+
     // No need for copy / move semantics
     FileCache(const FileCache&)            = delete;
     FileCache(FileCache&&)                 = delete;

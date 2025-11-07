@@ -54,10 +54,10 @@ public:
     virtual std::size_t GetFileSize(const char* path)                const = 0;
 
     // Open file for reading/writing: returns RAII-wrapped BaseFile
-    virtual BaseFilePtr OpenFileRead(const char* path, bool inBinaryMode = false)  = 0;
-    virtual BaseFilePtr OpenFileWrite(const char* path, bool inBinaryMode = false) = 0;
-    virtual BaseFilePtr OpenFileExisting(WFXFileDescriptor fd)                        = 0;
-    virtual BaseFilePtr OpenFileExisting(WFXFileDescriptor fd, std::size_t size)      = 0;
+    virtual BaseFilePtr OpenFileRead(const char* path, bool inBinaryMode = false)     = 0;
+    virtual BaseFilePtr OpenFileWrite(const char* path, bool inBinaryMode = false)    = 0;
+    virtual BaseFilePtr OpenFileExisting(WFXFileDescriptor fd, bool fromCache = true) = 0;
+    virtual BaseFilePtr OpenFileExisting(WFXFileDescriptor fd, std::size_t size, bool fromCache = true) = 0;
 
     // Directory Manipulation
     virtual bool          DirectoryExists(const char* path)                                                const = 0;

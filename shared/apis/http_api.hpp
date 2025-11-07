@@ -51,6 +51,10 @@ using SendTemplateRvalueFn    = WFX::Utils::MoveOnlyFunction<void(HttpResponse*,
 // Stream API
 using StreamFn = void (*)(HttpResponse* backend, StreamGenerator generator, bool streamChunked);
 
+// Data API
+using SetGlobalPtrDataFn = void  (*)(void*);
+using GetGlobalPtrDataFn = void* (*)();
+
 // vvv API declarations vvv
 struct HTTP_API_TABLE {
     // Routing
@@ -84,6 +88,10 @@ struct HTTP_API_TABLE {
 
     // Stream API
     StreamFn                Stream;
+
+    // Data API
+    SetGlobalPtrDataFn      SetGlobalPtrData;
+    GetGlobalPtrDataFn      GetGlobalPtrData;
 
     // Metadata
     HttpAPIVersion          apiVersion;

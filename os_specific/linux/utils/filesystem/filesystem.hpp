@@ -30,11 +30,12 @@ public:
 public: // For internal public use
     bool OpenRead(const char* path);
     bool OpenWrite(const char* path);
-    void OpenExisting(int fd, std::size_t size);
+    void OpenExisting(int fd, std::size_t size, bool cached);
 
 private:
     int         fd_       = -1;
     bool        existing_ = false;
+    bool        cached_   = false;
     std::size_t size_     = 0;
 };
 
@@ -47,10 +48,10 @@ public:
     std::size_t GetFileSize(const char* path)                const override;
 
     // File Handling
-    BaseFilePtr OpenFileRead(const char* path, bool inBinaryMode)        override;
-    BaseFilePtr OpenFileWrite(const char* path, bool inBinaryMode)       override;
-    BaseFilePtr OpenFileExisting(WFXFileDescriptor fd)                   override;
-    BaseFilePtr OpenFileExisting(WFXFileDescriptor fd, std::size_t size) override;
+    BaseFilePtr OpenFileRead(const char* path, bool inBinaryMode)                               override;
+    BaseFilePtr OpenFileWrite(const char* path, bool inBinaryMode)                              override;
+    BaseFilePtr OpenFileExisting(WFXFileDescriptor fd, bool fromCache = true)                   override;
+    BaseFilePtr OpenFileExisting(WFXFileDescriptor fd, std::size_t size, bool fromCache = true) override;
 
     // Directory Manipulation
     bool          DirectoryExists(const char* path)                                                 const override;

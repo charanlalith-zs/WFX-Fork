@@ -6,6 +6,7 @@
 #include "utils/backport/move_only_function.hpp"
 #include "utils/crypt/hash.hpp"
 #include "utils/rw_buffer/rw_buffer.hpp"
+#include "async/interface.hpp"
 
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
@@ -76,6 +77,7 @@ enum class ConnectionState : std::uint8_t {
 // Forward declare it so compilers won't cry
 struct ConnectionContext;
 
+using CoroutineStack  = std::vector<Async::CoroutinePtr>;
 using ReceiveCallback = WFX::Utils::MoveOnlyFunction<void(ConnectionContext*)>;
 
 struct FileInfo {
@@ -107,7 +109,7 @@ struct ConnectionContext : public ConnectionTag {
         std::uint16_t isFileOperation   : 1;       //  |
         std::uint16_t isShuttingDown    : 1;       //  |
         std::uint16_t streamChunked     : 1;       //  |
-        std::uint16_t __pad             : 7;       //  V
+        std::uint16_t __Pad             : 7;       //  V
     };                                             // 2 byte
 
     std::uint32_t trackBytes = 0;                  // 4 bytes
@@ -115,12 +117,14 @@ struct ConnectionContext : public ConnectionTag {
     
     WFX::Utils::RWBuffer rwBuffer;                 // 16 bytes
     
-    std::uint32_t   expectedBodyLength = 0;        // 4 bytes
     WFXSocket       socket             = -1;       // 4 | 8 bytes
-    StreamGenerator streamGenerator    = {};       // 8 | 16 bytes
+    StreamGenerator streamGenerator    = {};       // 8 bytes
     HttpRequest*    requestInfo        = nullptr;  // 8 bytes
+    HttpResponse*   responseInfo       = nullptr;  // 8 bytes (Async functions require larger scope)
     FileInfo*       fileInfo           = nullptr;  // 8 bytes
     WFXIpAddress    connInfo;                      // 20 bytes
+    std::uint32_t   expectedBodyLength = 0;        // 4 bytes
+    CoroutineStack  coroStack;                     // 24 bytes
 
 public: // Helper functions
     void ResetContext();
@@ -132,7 +136,7 @@ public: // Helper functions
     HttpParseState  GetParseState()      const;
     ConnectionState GetConnectionState() const;
 };
-static_assert(sizeof(ConnectionContext) <= 100, "ConnectionContext must STRICTLY be less than or equal to 100 bytes.");
+static_assert(sizeof(ConnectionContext) <= 128, "ConnectionContext must STRICTLY be less than or equal to 128 bytes.");
 
 // Abstraction for Windows and Linux impl
 class HttpConnectionHandler {

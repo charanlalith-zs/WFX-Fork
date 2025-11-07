@@ -1,6 +1,7 @@
 #ifndef WFX_HTTP_ROUTE_COMMON_HPP
 #define WFX_HTTP_ROUTE_COMMON_HPP
 
+#include "async/interface.hpp"
 #include "utils/uuid/uuid.hpp"
 #include "utils/backport/move_only_function.hpp"
 
@@ -50,9 +51,13 @@ struct StreamBuffer {
 };
 
 // Used throughout the entire program, hopefully
-using HttpCallbackType       = WFX::Utils::MoveOnlyFunction<void(WFX::Http::HttpRequest&, Response&)>;
+using AsyncCallbackType      = WFX::Utils::MoveOnlyFunction<AsyncPtr(WFX::Http::HttpRequest&, Response&)>;
+using SyncCallbackType       = WFX::Utils::MoveOnlyFunction<void(WFX::Http::HttpRequest&, Response&)>;
 using MiddlewareCallbackType = WFX::Utils::MoveOnlyFunction<MiddlewareAction(WFX::Http::HttpRequest&, Response&)>;
 using MiddlewareStack        = std::vector<MiddlewareCallbackType>;
 using StreamGenerator        = WFX::Utils::MoveOnlyFunction<StreamResult(StreamBuffer)>;
+
+// Main type stored inside of route node
+using HttpCallbackType = std::variant<std::monostate, SyncCallbackType, AsyncCallbackType>;
 
 #endif // WFX_HTTP_ROUTE_COMMON_HPP

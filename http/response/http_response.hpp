@@ -56,6 +56,9 @@ private:
     void PrepareFileHeaders(std::string_view path);
     bool ValidateFileSend(std::string_view path, bool autoHandle404, const char* funcName = "SendFile()");
 
+public: // Internal use
+    void ClearInfo();
+
 public:
     HttpVersion     version = HttpVersion::HTTP_1_1;
     HttpStatus      status  = HttpStatus::OK;

@@ -21,16 +21,18 @@ void LinuxFile::Close()
     // If u open from existing, u cannot close it like this
     if(fd_ >= 0 && !existing_) {
         ::close(fd_);
-        fd_ = -1;
+        fd_       = -1;
+        size_     = 0;
         existing_ = false;
+        cached_   = false;
     }
 }
 
 //  --- File Operations ---
 std::int64_t LinuxFile::Read(void* buffer, std::size_t bytes)
 {
-    if(fd_ < 0)
-        return 0;
+    if(cached_ || fd_ < 0)
+        return -1;
     
     ssize_t n = ::read(fd_, buffer, bytes);
     return n < 0 ? -1 : static_cast<std::int64_t>(n);
@@ -38,8 +40,8 @@ std::int64_t LinuxFile::Read(void* buffer, std::size_t bytes)
 
 std::int64_t LinuxFile::Write(const void* buffer, std::size_t bytes)
 {
-    if(fd_ < 0)
-        return 0;
+    if(cached_ || fd_ < 0)
+        return -1;
 
     ssize_t n = ::write(fd_, buffer, bytes);
     if(n > 0)
@@ -51,7 +53,7 @@ std::int64_t LinuxFile::Write(const void* buffer, std::size_t bytes)
 std::int64_t LinuxFile::ReadAt(void *buffer, std::size_t bytes, std::size_t offset)
 {
     if(fd_ < 0)
-        return 0;
+        return -1;
 
     ssize_t n = ::pread(fd_, buffer, bytes, static_cast<off_t>(offset));
     return n < 0 ? -1 : static_cast<std::int64_t>(n);
@@ -59,8 +61,8 @@ std::int64_t LinuxFile::ReadAt(void *buffer, std::size_t bytes, std::size_t offs
 
 std::int64_t LinuxFile::WriteAt(const void *buffer, std::size_t bytes, std::size_t offset)
 {
-    if(fd_ < 0)
-        return 0;
+    if(cached_ || fd_ < 0)
+        return -1;
 
     ssize_t n = ::pwrite(fd_, buffer, bytes, static_cast<off_t>(offset));
     if(n > 0 && (offset + n > size_))
@@ -71,7 +73,7 @@ std::int64_t LinuxFile::WriteAt(const void *buffer, std::size_t bytes, std::size
 
 bool LinuxFile::Seek(std::size_t offset)
 {
-    if(fd_ < 0)
+    if(cached_ || fd_ < 0)
         return false;
     
     off_t ret = ::lseek(fd_, static_cast<off_t>(offset), SEEK_SET);
@@ -128,10 +130,11 @@ bool LinuxFile::OpenWrite(const char* path)
     return true;
 }
 
-void LinuxFile::OpenExisting(int fd, std::size_t size)
+void LinuxFile::OpenExisting(int fd, std::size_t size, bool cached)
 {
     fd_       = fd;
     existing_ = true;
+    cached_   = cached;
     size_     = size;
 }
 
@@ -186,7 +189,7 @@ BaseFilePtr LinuxFileSystem::OpenFileWrite(const char* path, bool inBinaryMode)
     return file;
 }
 
-BaseFilePtr LinuxFileSystem::OpenFileExisting(WFXFileDescriptor fd)
+BaseFilePtr LinuxFileSystem::OpenFileExisting(WFXFileDescriptor fd, bool fromCache)
 {
     if(fd < 0)
         return nullptr;
@@ -196,18 +199,18 @@ BaseFilePtr LinuxFileSystem::OpenFileExisting(WFXFileDescriptor fd)
         return nullptr;
 
     auto file = std::make_unique<LinuxFile>();
-    file->OpenExisting(fd, st.st_size);
+    file->OpenExisting(fd, st.st_size, fromCache);
 
     return file;
 }
 
-BaseFilePtr LinuxFileSystem::OpenFileExisting(WFXFileDescriptor fd, std::size_t size)
+BaseFilePtr LinuxFileSystem::OpenFileExisting(WFXFileDescriptor fd, std::size_t size, bool fromCache)
 {
     if(fd < 0 || size == 0)
         return nullptr;
 
     auto file = std::make_unique<LinuxFile>();
-    file->OpenExisting(fd, size);
+    file->OpenExisting(fd, size, fromCache);
 
     return file;
 }

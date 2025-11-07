@@ -4,6 +4,7 @@
 #include "aliases.hpp"
 #include "helper.hpp"
 #include "response.hpp"
+#include "async/routes.hpp"
 #include "core/core.hpp"
 #include "shared/utils/deferred_init_vector.hpp"
 
@@ -16,7 +17,7 @@
     static struct WFX_ROUTE_CLASS(method, uniq) {                       \
         WFX_ROUTE_CLASS(method, uniq)() {                               \
             WFX::Shared::__WFXDeferredRoutes().emplace_back([] {        \
-                __wfx_api->GetHttpAPIV1()->RegisterRoute(               \
+                __WFXApi->GetHttpAPIV1()->RegisterRoute(               \
                     WFX::Http::HttpMethod::method, path, callback       \
                 );                                                      \
             });                                                         \
@@ -27,7 +28,7 @@
     static struct WFX_ROUTE_CLASS(method, uniq) {                             \
         WFX_ROUTE_CLASS(method, uniq)() {                                     \
             WFX::Shared::__WFXDeferredRoutes().emplace_back([] {              \
-                __wfx_api->GetHttpAPIV1()->RegisterRouteEx(                   \
+                __WFXApi->GetHttpAPIV1()->RegisterRouteEx(                   \
                     WFX::Http::HttpMethod::method, path, mw, callback         \
                 );                                                            \
             });                                                               \
@@ -41,11 +42,11 @@
     WFX_INTERNAL_ROUTE_REGISTER_EX_IMPL(method, path, mw, callback, __COUNTER__)
 
 // vvv HTTP MACROS vvv
-#define WFX_GET(path, cb)  WFX_INTERNAL_ROUTE_REGISTER(GET, path, cb)
-#define WFX_POST(path, cb) WFX_INTERNAL_ROUTE_REGISTER(POST, path, cb)
+#define WFX_GET(path, cb)  WFX_INTERNAL_ROUTE_REGISTER(GET, path, MakeHttpCallbackFromLambda(cb))
+#define WFX_POST(path, cb) WFX_INTERNAL_ROUTE_REGISTER(POST, path, MakeHttpCallbackFromLambda(cb))
 
-#define WFX_GET_EX(path, mw, cb)  WFX_INTERNAL_ROUTE_REGISTER_EX(GET, path, mw, cb)
-#define WFX_POST_EX(path, mw, cb) WFX_INTERNAL_ROUTE_REGISTER_EX(POST, path, mw, cb)
+#define WFX_GET_EX(path, mw, cb)  WFX_INTERNAL_ROUTE_REGISTER_EX(GET, path, mw, MakeHttpCallbackFromLambda(cb))
+#define WFX_POST_EX(path, mw, cb) WFX_INTERNAL_ROUTE_REGISTER_EX(POST, path, mw, MakeHttpCallbackFromLambda(cb))
 
 #define WFX_MW_EX(...) MakeMiddlewareFromFunctions(__VA_ARGS__)
 
@@ -54,7 +55,7 @@
     static struct WFX_CONCAT(WFXGroupStart_, id) {                    \
         WFX_CONCAT(WFXGroupStart_, id)() {                            \
             WFX::Shared::__WFXDeferredRoutes().emplace_back([] {      \
-                __wfx_api->GetHttpAPIV1()->PushRoutePrefix(path);     \
+                __WFXApi->GetHttpAPIV1()->PushRoutePrefix(path);     \
             });                                                       \
         }                                                             \
     } WFX_CONCAT(WFXGroupStartInst_, id);
@@ -63,7 +64,7 @@
     static struct WFX_CONCAT(WFXGroupEnd_, id) {                      \
         WFX_CONCAT(WFXGroupEnd_, id)() {                              \
             WFX::Shared::__WFXDeferredRoutes().emplace_back([] {      \
-                __wfx_api->GetHttpAPIV1()->PopRoutePrefix();          \
+                __WFXApi->GetHttpAPIV1()->PopRoutePrefix();          \
             });                                                       \
         }                                                             \
     } WFX_CONCAT(WFXGroupEndInst_, id);

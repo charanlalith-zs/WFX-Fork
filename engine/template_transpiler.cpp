@@ -59,10 +59,10 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
                 return TagResult::FAILURE;
 
             // Create a new patch frame for this 'if' block
-            offsetPatchStack.push({});
+            offsetPatchStack.emplace_back();
             
             // Push the index of this op (which is the current size) onto the stack
-            offsetPatchStack.top().push_back(static_cast<std::uint32_t>(ir.size()));
+            offsetPatchStack.back().push_back(static_cast<std::uint32_t>(ir.size()));
 
             // Add the IF op, it needs patching
             ir.push_back({
@@ -79,7 +79,7 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
                 logger_.Error("[TemplateEngine].[CodeGen:IR]: Found 'elif' without 'if'");
                 return TagResult::FAILURE;
             }
-            if(offsetPatchStack.top().empty()) {
+            if(offsetPatchStack.back().empty()) {
                 logger_.Error("[TemplateEngine].[CodeGen:IR]: Found 'elif' after 'else'");
                 return TagResult::FAILURE;
             }
@@ -92,10 +92,10 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
                 true,
                 std::uint32_t(0) // Payload is jump_state
             });
-            offsetPatchStack.top().push_back(jumpOpIndex);
+            offsetPatchStack.back().push_back(jumpOpIndex);
 
             // Patch all previous IF/ELIF/JUMP ops in the current frame to jump here
-            for(auto idx : offsetPatchStack.top()) {
+            for(auto idx : offsetPatchStack.back()) {
                 auto& prevOp = ir[idx];
                 prevOp.patch = false;
 
@@ -106,7 +106,7 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
                 else if(prevOp.type == OpType::JUMP)
                     prevOp.payload = static_cast<std::uint32_t>(ir.size());
             }
-            offsetPatchStack.top().clear();
+            offsetPatchStack.back().clear();
 
             // Parse this 'elif's expression
             auto [success, exprIndex] = ParseExpr(ctx, tagArgs);
@@ -114,7 +114,7 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
                 return TagResult::FAILURE;
 
             // Add the ELIF op, it needs patching
-            offsetPatchStack.top().push_back(static_cast<std::uint32_t>(ir.size()));
+            offsetPatchStack.back().push_back(static_cast<std::uint32_t>(ir.size()));
             ir.push_back({
                 OpType::ELIF,
                 true,
@@ -129,7 +129,7 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
                 logger_.Error("[TemplateEngine].[CodeGen:IR]: Found 'else' without 'if'");
                 return TagResult::FAILURE;
             }
-            if(offsetPatchStack.top().empty()) {
+            if(offsetPatchStack.back().empty()) {
                 logger_.Error("[TemplateEngine].[CodeGen:IR]: Found multiple 'else' tags");
                 return TagResult::FAILURE;
             }
@@ -146,7 +146,7 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
             std::uint32_t elseStateNum = static_cast<std::uint32_t>(ir.size());
 
             // Patch all previous 'if' and 'elif' ops to jump to this 'else' block
-            for(std::uint32_t idx : offsetPatchStack.top()) {
+            for(std::uint32_t idx : offsetPatchStack.back()) {
                 auto& op = ir[idx];
                 op.patch = false;
 
@@ -158,8 +158,8 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
 
             // Clear the stack, but add the new JUMP op index-
             // -as its the only one that needs to be patched by 'endif'
-            offsetPatchStack.top().clear();
-            offsetPatchStack.top().push_back(jumpOpIndex);
+            offsetPatchStack.back().clear();
+            offsetPatchStack.back().push_back(jumpOpIndex);
 
             // Add the ELSE marker op
             ir.push_back({
@@ -180,7 +180,7 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
             std::uint32_t endState = static_cast<std::uint32_t>(ir.size());
 
             // Patch all remaining jumps (from 'if', 'elif', or 'else')
-            for(std::uint32_t idx : offsetPatchStack.top()) {
+            for(std::uint32_t idx : offsetPatchStack.back()) {
                 auto& op = ir[idx];
                 op.patch = false;
 
@@ -190,7 +190,7 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
                     op.payload = endState; // Set the std::uint32_t payload
             }
 
-            offsetPatchStack.pop(); // Pop this 'if' frame
+            offsetPatchStack.pop_back(); // Pop this 'if' frame
 
             // Add the ENDIF marker op
             ir.push_back({
@@ -242,8 +242,8 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
                 return TagResult::FAILURE;
 
             // Push FOR op (needs patching)
-            offsetPatchStack.push({});
-            offsetPatchStack.top().push_back(static_cast<std::uint32_t>(ir.size()));
+            offsetPatchStack.emplace_back();
+            offsetPatchStack.back().push_back(static_cast<std::uint32_t>(ir.size()));
 
             // Record loop variable name
             auto varId = GetVarNameId(ctx, loopVar);
@@ -263,10 +263,10 @@ TemplateEngine::TagResult TemplateEngine::ProcessTagIR(
                 return TagResult::FAILURE;
             }
 
-            auto& patchList = offsetPatchStack.top();
+            auto& patchList = offsetPatchStack.back();
             std::uint32_t forIdx = patchList.front();
             patchList.clear();
-            offsetPatchStack.pop();
+            offsetPatchStack.pop_back();
 
             std::uint32_t endState = static_cast<std::uint32_t>(ir.size());
 
@@ -303,7 +303,7 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(
 )
 {
     RPNBytecode outputQueue;
-    std::stack<Legacy::Token> operatorStack;
+    std::vector<Legacy::Token> operatorStack;
     Legacy::Lexer lexer{expression}; // My trusty old lexer :)
 
     auto& token = lexer.get_token();
@@ -337,13 +337,13 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(
 
             // --- Parentheses ---
             case Legacy::TOKEN_LPAREN:
-                operatorStack.push(token);
+                operatorStack.push_back(std::move(token));
                 break;
 
             case Legacy::TOKEN_RPAREN:
                 while(
                     !operatorStack.empty()
-                    && operatorStack.top().token_type != Legacy::TOKEN_LPAREN
+                    && operatorStack.back().token_type != Legacy::TOKEN_LPAREN
                 )
                     if(!PopOperator(operatorStack, outputQueue)) return { false, 0 };
 
@@ -352,7 +352,7 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(
                     return { false, 0 };
                 }
 
-                operatorStack.pop(); // Pop the '('
+                operatorStack.pop_back(); // Pop the '('
                 break;
             
             // --- Dot Operator ---
@@ -369,9 +369,9 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(
                 bool          isRightAsc = IsRightAssociative(Legacy::TOKEN_DOT);
 
                 while(!operatorStack.empty() && 
-                    operatorStack.top().token_type != Legacy::TOKEN_LPAREN)
+                    operatorStack.back().token_type != Legacy::TOKEN_LPAREN)
                 {
-                    std::uint32_t topPrec = GetOperatorPrecedence(operatorStack.top().token_type);
+                    std::uint32_t topPrec = GetOperatorPrecedence(operatorStack.back().token_type);
                     if((topPrec > prec || (topPrec == prec && !isRightAsc))) {
                         if(!PopOperator(operatorStack, outputQueue))
                             return { false, 0 };
@@ -380,7 +380,7 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(
                         break;
                 }
 
-                operatorStack.push(token);
+                operatorStack.push_back(std::move(token));
                 break;
             }
 
@@ -397,9 +397,9 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(
                 bool          isRightAsc = IsRightAssociative(token.token_type);
 
                 while(!operatorStack.empty() && 
-                       operatorStack.top().token_type != Legacy::TOKEN_LPAREN)
+                       operatorStack.back().token_type != Legacy::TOKEN_LPAREN)
                 {
-                    std::uint32_t topPrec = GetOperatorPrecedence(operatorStack.top().token_type);
+                    std::uint32_t topPrec = GetOperatorPrecedence(operatorStack.back().token_type);
                     if((topPrec > prec || (topPrec == prec && !isRightAsc))) {
                         if(!PopOperator(operatorStack, outputQueue))
                             return { false, 0 };
@@ -407,14 +407,14 @@ TemplateEngine::ParseResult TemplateEngine::ParseExpr(
                     else
                         break;
                 }
-                operatorStack.push(token);
+                operatorStack.push_back(std::move(token));
                 break;
         }
         token = lexer.get_token();
     }
 
     while(!operatorStack.empty()) {
-        if(operatorStack.top().token_type == Legacy::TOKEN_LPAREN) {
+        if(operatorStack.back().token_type == Legacy::TOKEN_LPAREN) {
             logger_.Error("[TemplateEngine].[CodeGen:EP]: Mismatched parentheses, extra '('");
             return { false, 0 };
         }
@@ -468,18 +468,18 @@ std::uint32_t TemplateEngine::GetOperatorPrecedence(Legacy::TokenType type)
     }
 }
 
-bool TemplateEngine::PopOperator(std::stack<Legacy::Token>& opStack, RPNBytecode& outputQueue)
+bool TemplateEngine::PopOperator(std::vector<Legacy::Token>& opStack, RPNBytecode& outputQueue)
 {
-    Legacy::TokenType type = opStack.top().token_type;
+    Legacy::TokenType type = opStack.back().token_type;
     if(!IsOperator(type)) {
         logger_.Error("[TemplateEngine].[CodeGen:EP]: Tried to pop non-operator token from stack: ", (int)type);
-        opStack.pop();
+        opStack.pop_back();
         return false;
     }
 
     RPNOpCode op_code = TokenToOpCode(type);
     outputQueue.push_back({ op_code, 0 });
-    opStack.pop();
+    opStack.pop_back();
     return true;
 }
 
@@ -982,8 +982,7 @@ using WFX::Core::SafeGetJson;
                     "                    }\n"
                     "                    auto& arr = res->get_ref<Json::array_t&>();\n"
                     "                    ctx[\"" + loopVar + "\"] = arr.front();\n"
-                    "                    ctx[\"__iid_" + jumpVar + "\"] = std::uint32_t(" + UInt64ToStr(i + 1) + ");\n"
-                    "                    ctx[\"__idx_" + jumpVar + "\"] = std::uint32_t(1);\n"
+                    "                    ctx[\"__linf_" + jumpVar + "\"] = (std::uint64_t("+ UInt64ToStr(i + 1) + ") << 32) | std::uint32_t(1);\n"
                     "                    [[fallthrough]];\n";
                 writeResult = SafeWrite(ioCtx, line.c_str(), line.size());
 
@@ -999,17 +998,18 @@ using WFX::Core::SafeGetJson;
                 line =
                     " {\n"
                     "                    auto& arr = " + expr + "->get_ref<Json::array_t&>();\n"
-                    "                    auto& idxVal = ctx[\"__idx_" + jumpVar + "\"];\n"
-                    "                    std::uint32_t idx = idxVal.get<std::uint32_t>();\n"
+                    "                    auto& linfVal = ctx[\"__linf_" + jumpVar + "\"];\n"
+                    "                    std::uint64_t linf = linfVal.get<std::uint64_t>();\n"
+                    "                    std::uint32_t iid = linf >> 32;\n"
+                    "                    std::uint32_t idx = linf & 0xFFFFFFFFu;\n"
                     "                    if(idx < arr.size()) {\n"
                     "                        ctx[\"" + loopVar + "\"] = arr[idx];\n"
-                    "                        idxVal = idx + 1;\n"
-                    "                        state = ctx[\"__iid_" + jumpVar + "\"].get<std::uint32_t>();\n"
+                    "                        linfVal = (std::uint64_t(iid) << 32) | (idx + 1);\n"
+                    "                        state = iid;\n"
                     "                        continue;\n"
                     "                    }\n"
                     "                    ctx.erase(\"" + loopVar + "\");\n"
-                    "                    ctx.erase(\"__idx_" + jumpVar + "\");\n"
-                    "                    ctx.erase(\"__iid_" + jumpVar + "\");\n"
+                    "                    ctx.erase(\"__linf_" + jumpVar + "\");\n"
                     "                    [[fallthrough]];\n";
                 writeResult = SafeWrite(ioCtx, line.c_str(), line.size());
 

@@ -10,36 +10,39 @@ namespace WFX::Http {
 using namespace WFX::Core;  // For 'Config'
 using namespace std::chrono;
 
-IpLimiter& IpLimiter::GetInstance()
+IpLimiter::IpLimiter(BufferPool& poolRef)
+    : poolRef_(poolRef)
 {
-    static IpLimiter instance;
-    return instance;
+    ipLimits_.Init(512);
 }
 
-bool IpLimiter::AllowConnection(const WFXIpAddress& ip)
+bool IpLimiter::AllowConnection(const WFXIpAddress &ip)
 {
-    return ipLimits_.GetOrInsertWith(NormalizeIp(ip), [](IpLimiterEntry& entry) -> bool {
+    auto* entry = ipLimits_.GetOrInsert(NormalizeIp(ip), {});
+    if(entry) {
         auto& cfg = Config::GetInstance().networkConfig;
 
-        if(entry.connectionCount >= cfg.maxConnectionsPerIp)
+        if(entry->connectionCount >= cfg.maxConnectionsPerIp)
             return false;
 
         // Initialize token bucket on first connection if not already set
-        if(entry.connectionCount == 0 && entry.bucket.tokens == 0)
-            entry.bucket.tokens = cfg.maxRequestBurstSize;
+        if(entry->connectionCount == 0 && entry->bucket.tokens == 0)
+            entry->bucket.tokens = cfg.maxRequestBurstSize;
 
-        ++entry.connectionCount;
+        ++entry->connectionCount;
         return true;
-    });
+    }
+    return false;
 }
 
 bool IpLimiter::AllowRequest(const WFXIpAddress& ip)
 {
-    return ipLimits_.GetWith(NormalizeIp(ip), [](IpLimiterEntry& entry) -> bool {
+    auto* entry = ipLimits_.Get(NormalizeIp(ip));
+    if(entry) {
         const auto now = std::chrono::steady_clock::now();
         const auto& cfg = Config::GetInstance().networkConfig;
 
-        TokenBucket& bucket = entry.bucket;
+        TokenBucket& bucket = entry->bucket;
 
         const std::int64_t elapsedMs  = std::max<std::int64_t>(
             0, std::chrono::duration_cast<std::chrono::milliseconds>(now - bucket.lastRefill).count()
@@ -61,17 +64,20 @@ bool IpLimiter::AllowRequest(const WFXIpAddress& ip)
             --bucket.tokens;
             return true;
         }
+    }
 
-        return false;
-    });
+    return false;
 }
 
 void IpLimiter::ReleaseConnection(const WFXIpAddress& ip)
 {
-    const WFXIpAddress key = NormalizeIp(ip);
-    const bool shouldErase = ipLimits_.GetWith(key, [](IpLimiterEntry& entry) -> bool {
-                                return --entry.connectionCount <= 0;
-                            });
+    WFXIpAddress key         = NormalizeIp(ip);
+    bool         shouldErase = false;
+    auto*        entry       = ipLimits_.Get(key);
+    
+    if(entry)
+        shouldErase = --(entry->connectionCount) <= 0;
+
     if(shouldErase)
         ipLimits_.Erase(key);
 }

@@ -3,7 +3,6 @@
 #include "engine/template_engine.hpp"
 #include "http/common/http_detector.hpp"
 #include "http/connection/http_connection.hpp"
-#include "http/common/http_global_state.hpp"
 #include "include/third_party/json/json.hpp"
 #include "utils/filecache/filecache.hpp"
 #include "utils/filesystem/filesystem.hpp"
@@ -146,13 +145,13 @@ void HttpResponse::SendTemplate(std::string&& path, Json&& ctx)
 
         // Get the actual fd for us to perform operations on it, and while we are at it-
         // -open existing fd for reading (wrap it in common interface)
-        auto [fd, size] = GetGlobalState().fileCache->GetFileDesc(meta->filePath);
+        auto [fd, size] = FileCache::GetInstance().GetFileDesc(meta->filePath);
         if(fd == WFX_INVALID_FILE) {
             Status(HttpStatus::INTERNAL_SERVER_ERROR)
                 .SendText("[ST]_2Internal Error");
             return;
         }
-        auto inFile = FileSystem::GetFileSystem().OpenFileExisting(fd, size);
+        auto inFile = FileSystem::GetFileSystem().OpenFileExisting(fd, static_cast<std::size_t>(size));
         if(!inFile) {
             Status(HttpStatus::INTERNAL_SERVER_ERROR)
                 .SendText("[ST]_3Internal Error");
@@ -386,6 +385,16 @@ void HttpResponse::PrepareFileHeaders(std::string_view path)
 
     headers.SetHeader("Content-Length", UInt64ToStr(fileSize));
     headers.SetHeader("Content-Type", std::string(mime));
+}
+
+// vvv Internal use vvv
+void HttpResponse::ClearInfo()
+{
+    headers.Clear();
+    body           = std::monostate{};
+    version        = HttpVersion::HTTP_1_1;
+    status         = HttpStatus::OK;
+    operationType_ = OperationType::TEXT;
 }
 
 } // namespace WFX::Http

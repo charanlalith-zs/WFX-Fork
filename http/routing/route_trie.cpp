@@ -107,7 +107,11 @@ const TrieNode* RouteTrie::Match(std::string_view requestPath, PathSegments& out
         current = next;
     }
 
-    return (current->callback) ? current : nullptr;
+    // Monostate signifies that it doesn't have any callback
+    if(std::holds_alternative<std::monostate>(current->callback))
+        return nullptr;
+
+    return current;
 }
 
 void RouteTrie::PushGroup(std::string_view prefix)

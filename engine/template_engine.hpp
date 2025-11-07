@@ -10,7 +10,6 @@
 #include <vector>
 #include <unordered_map>
 #include <variant>
-#include <stack>
 #include <cstdint>
 
 namespace WFX::Core {
@@ -124,9 +123,9 @@ private: // Nested helper types for the parser
     
     // Compilation context
     struct CompilationContext {
-        IOContext                 io;          // Unified write buffer
-        std::deque<TemplateFrame> stack;       // Recursive includes
-        std::size_t               chunkSize{0};
+        IOContext                  io;          // Unified write buffer
+        std::vector<TemplateFrame> stack;       // Recursive includes
+        std::size_t                chunkSize{0};
 
         bool foundDynamicTag{false};    // ---
         bool inBlock{false};            //   | Aligned to-
@@ -199,7 +198,7 @@ private: // Nested helper types for the parser
         TemplateFrame frame;
         IRCode        ir;
 
-        std::stack<std::vector<std::uint32_t>> offsetPatchStack;
+        std::vector<std::vector<std::uint32_t>> offsetPatchStack;
 
         // Optimization ig
         std::unordered_map<std::string, std::uint32_t> varNameMap;
@@ -232,7 +231,7 @@ private: // Transpiler Functions (Impl in template_transpiler.cpp)
     // Parsing Functions
     ParseResult   ParseExpr(TranspilationContext& ctx, std::string_view expression);
     std::uint32_t GetOperatorPrecedence(Legacy::TokenType type);
-    bool          PopOperator(std::stack<Legacy::Token>& opStack, RPNBytecode& outputQueue);
+    bool          PopOperator(std::vector<Legacy::Token>& opStack, RPNBytecode& outputQueue);
     bool          IsOperator(Legacy::TokenType type);
     bool          IsRightAssociative(Legacy::TokenType type);
 

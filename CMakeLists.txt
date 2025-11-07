@@ -1,8 +1,9 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.20)
 project(wfx)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# set(CMAKE_CXX_EXTENSIONS OFF)
 
 # -----------------------------
 # Include third-party dependencies
@@ -55,15 +56,47 @@ target_include_directories(wfx PRIVATE
 # Include ssl dependencies
 include(cmake/ssl.cmake)
 
-# Compile/link optimizations to shrink binary only in release
+# Compile/link time optimizations
 target_compile_options(wfx PRIVATE
-    $<$<CONFIG:Release>:-ffunction-sections -fdata-sections -fvisibility=hidden -flto>
-)
-target_link_options(wfx PRIVATE
-    $<$<CONFIG:Release>:-Wl,--gc-sections -Wl,--as-needed -Wl,-s -flto>
-)
-target_compile_options(wfx PRIVATE
+    # Debug
     $<$<CONFIG:Debug>:-g -O0>
+
+    # Release (GCC)
+    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:GNU>>:
+        -O3 -ffunction-sections -fdata-sections -fvisibility=hidden -flto -fmerge-all-constants
+    >
+
+    # Release (Clang / AppleClang)
+    $<$<AND:$<CONFIG:Release>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>>:
+        -O3 -ffunction-sections -fdata-sections -fvisibility=hidden -flto -fmerge-all-constants
+    >
+
+    # Release (Intel oneAPI / icx)
+    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:IntelLLVM>>:
+        -O3 -ffunction-sections -fdata-sections -fvisibility=hidden -flto -fmerge-all-constants -xHost
+    >
+
+    # Release (MSVC)
+    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:
+        /O2 /GL /Gw /Gy /Zc:inline /GS-
+    >
+)
+
+target_link_options(wfx PRIVATE
+    # Release (GCC / Clang / AppleClang / Intel)
+    $<$<AND:$<CONFIG:Release>,$<OR:
+        $<CXX_COMPILER_ID:GNU>,
+        $<CXX_COMPILER_ID:Clang>,
+        $<CXX_COMPILER_ID:AppleClang>,
+        $<CXX_COMPILER_ID:IntelLLVM>
+    >>:
+        -Wl,--gc-sections -Wl,--as-needed -Wl,-s -flto
+    >
+
+    # Release (MSVC)
+    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:MSVC>>:
+        /LTCG /OPT:REF /OPT:ICF
+    >
 )
 
 # OS-specific system libraries

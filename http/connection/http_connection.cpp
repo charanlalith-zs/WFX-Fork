@@ -1,4 +1,5 @@
 #include "http_connection.hpp"
+#include "http/response/http_response.hpp"
 
 namespace WFX::Http {
 
@@ -60,15 +61,9 @@ void ConnectionContext::ResetContext()
 {
     rwBuffer.ResetBuffer();
     
-    if(requestInfo) {
-        delete requestInfo;
-        requestInfo = nullptr;
-    }
-
-    if(fileInfo) {
-        delete fileInfo;
-        fileInfo = nullptr;
-    }
+    if(requestInfo)  { delete requestInfo;  requestInfo  = nullptr; }
+    if(responseInfo) { delete responseInfo; responseInfo = nullptr; }
+    if(fileInfo)     { delete fileInfo;     fileInfo     = nullptr; }
     
     connectionState    = 0;
     isFileOperation    = 0;
@@ -86,11 +81,9 @@ void ConnectionContext::ClearContext()
 {
     rwBuffer.ClearBuffer();
 
-    if(requestInfo)
-        requestInfo->ClearInfo();
-    
-    if(fileInfo)
-        *fileInfo = FileInfo{};
+    if(requestInfo)  requestInfo->ClearInfo();
+    if(responseInfo) responseInfo->ClearInfo();
+    if(fileInfo)     *fileInfo = FileInfo{};
 
     isFileOperation    = 0;
     isStreamOperation  = 0;

@@ -4,7 +4,6 @@
 #define WFX_LINUX_EPOLL_CONNECTION_HPP
 
 #include "config/config.hpp"
-#include "http/common/http_global_state.hpp"
 #include "http/connection/http_connection.hpp"
 #include "http/limits/ip_limiter/ip_limiter.hpp"
 #include "http/ssl/http_ssl.hpp"
@@ -66,22 +65,23 @@ private: // Helper Functions
     ssize_t            WrapFile(ConnectionContext* ctx, int fd, off_t* offset, std::size_t count);
 
 private: // Misc
-    IpLimiter&        ipLimiter_  = IpLimiter::GetInstance();
     Config&           config_     = Config::GetInstance();
     Logger&           logger_     = Logger::GetInstance();
-    FileCache*        fileCache_  = GetGlobalState().fileCache;
+    FileCache&        fileCache_  = FileCache::GetInstance();
+    BufferPool&       pool_       = BufferPool::GetInstance();
+
+    IpLimiter         ipLimiter_  = {pool_};
+    ReceiveCallback   onReceive_  = {};
     std::atomic<bool> running_    = true;
     bool              useHttps_   = false;
-    ReceiveCallback   onReceive_;
-    BufferPool        pool_{1, 1024 * 1024, [](std::size_t currSize){ return currSize * 2; }};
 
 private: // Constexpr stuff
     constexpr static char    CHUNK_END[]           = "0\r\n\r\n";
     constexpr static ssize_t SWITCH_FILE_TO_STREAM = std::numeric_limits<ssize_t>::min();
 
 private: // Timeout handler
-    int        timerFd_ = -1;
     TimerWheel timerWheel_;
+    int        timerFd_ = -1;
 
 private: // Epoll + SSL
     int           listenFd_  = -1;

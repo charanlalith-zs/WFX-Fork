@@ -2,20 +2,19 @@
 #define WFX_HTTP_IP_LIMITER_HPP
 
 #include "../base_limiter.hpp"
-#include "utils/hash_map/concurrent_map/concurrent_hash_map.hpp"
-
-#include <string>
-#include <chrono>
-#include <mutex>
+#include "utils/buffer_pool/buffer_pool.hpp"
+#include "utils/hash_map/concurrent_map/hash_shard.hpp"
 
 namespace WFX::Http {
 
-using namespace WFX::Utils; // For 'ConcurrentHashMap'
+using namespace WFX::Utils; // For 'HashShard', 'BufferPool'
 
 class IpLimiter : BaseLimiter {
 public:
-    static IpLimiter& GetInstance();
+    IpLimiter(BufferPool& poolRef);
+    ~IpLimiter() = default;
 
+public:
     // Called on new connection attempt
     bool AllowConnection(const WFXIpAddress& ip);
 
@@ -26,9 +25,6 @@ public:
     void ReleaseConnection(const WFXIpAddress& ip);
 
 private:
-    IpLimiter()  = default;
-    ~IpLimiter() = default;
-
     IpLimiter(const IpLimiter&) = delete;
     IpLimiter& operator=(const IpLimiter&) = delete;
     IpLimiter(IpLimiter&&) = delete;
@@ -45,7 +41,8 @@ private:
         TokenBucket bucket;
     };
 
-    ConcurrentHashMap<WFXIpAddress, IpLimiterEntry, 64, 128> ipLimits_;
+    BufferPool& poolRef_;
+    HashShard<WFXIpAddress, IpLimiterEntry> ipLimits_{poolRef_};
 };
 
 } // namespace WFX::Http

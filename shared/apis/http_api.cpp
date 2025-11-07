@@ -8,6 +8,10 @@ namespace WFX::Shared {
 
 using namespace WFX::Http; // For 'Router', 'Middleware'
 
+// Can be set via the http api, the reason why this is safe to set even with multiple connections is-
+// -our entire flow of data is single threaded and will remain that way
+static void* __GlobalHttpData1 = nullptr;
+
 const HTTP_API_TABLE* GetHttpAPIV1()
 {
     static HTTP_API_TABLE __GlobalHttpAPIV1 = {
@@ -64,6 +68,14 @@ const HTTP_API_TABLE* GetHttpAPIV1()
         }},
         [](HttpResponse* backend, StreamGenerator generator, bool streamChunked) { // StreamFn
             backend->Stream(std::move(generator), streamChunked);
+        },
+
+        // Data API
+        [](void* data) { // SetGlobalPtrData
+            __GlobalHttpData1 = data;
+        },
+        []() { // GetGlobalPtrData
+            return __GlobalHttpData1;
         },
 
         // Version

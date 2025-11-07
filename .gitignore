@@ -8,3 +8,6 @@ BuildGCCDebug/
 BuildMSVC/
 Debug/
 Release/
+
+# Internal
+ignore/
