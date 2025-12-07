@@ -8,7 +8,7 @@ namespace Async {
 // IMPORTANT: THIS FUNCTION EXPECTS POINTER TO CONNECTION CONTEXT BE SET VIA 'SetGlobalPtrData' BEFORE BEING INVOKED
 inline AsyncPtr SleepFor(std::uint32_t delayMs) noexcept
 {
-    return Async::MakeAsync(
+    return Async::MakeAsync<void>(
         [](AsyncPtr self, std::uint32_t delayMs) {
             switch(self->GetState())
             {

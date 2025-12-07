@@ -4,40 +4,57 @@
 #include "interface.hpp"
 
 // vvv Helper Macros vvv
-#define AwaitHelper(awaitable, onError, counter)   \
-        if(Async::Await(__AsyncSelf, awaitable)) { \
-            __AsyncSelf->SetState(counter);        \
-            return;                                \
-        }                                          \
-                                                   \
-        if(__AsyncSelf->HasError()) {              \
-            onError                                \
-            __AsyncSelf->Finish();                 \
-            return;                                \
-        }                                          \
-                                                   \
-        [[fallthrough]];                           \
+#define CoHelper(awaitable, returnPtr, onError, counter)      \
+        if(Async::Await(__AsyncSelf, awaitable, returnPtr)) { \
+            __AsyncSelf->SetState(counter);                   \
+            return;                                           \
+        }                                                     \
+                                                              \
+        if(__AsyncSelf->HasError()) {                         \
+            onError                                           \
+            __AsyncSelf->Finish();                            \
+            return;                                           \
+        }                                                     \
+                                                              \
+        [[fallthrough]];                                      \
     case counter:
 
 // vvv Main Macros vvv
 // NOTE: Macros here are not upper case because i'm trying to make them feel natural integrated-
 //       -inside of a function. Thats the entire point of this header file
-#define AsyncInit AsyncPtr __AsyncSelf
+#define CoSelf AsyncPtr __AsyncSelf
 
-#define AsyncStart                      \
-    switch(__AsyncSelf->GetState()) {   \
+#define CoStart                        \
+    switch(__AsyncSelf->GetState()) {  \
         case 0:
 
-#define AsyncEnd                   \
+#define CoEnd                      \
         default:                   \
             __AsyncSelf->Finish(); \
             break;                 \
     }
 
-#define Await(awaitable, onError) AwaitHelper(awaitable, onError, __COUNTER__)
+// vvv Await vvv
+#define CoAwait(awaitable, onError)               CoHelper(awaitable, static_cast<void*>(nullptr), onError, __COUNTER__)
+#define CoAwaitGet(awaitable, returnVar, onError) CoHelper(awaitable, &returnVar, onError, __COUNTER__)
 
-// vvv Error Handling vvv
-#define AsyncGetError()    __AsyncSelf->GetError()
-#define AsyncSetError(err) __AsyncSelf->SetError(err)
+// vvv Return vvv
+#define CoReturn(val)                                                                        \
+    do {                                                                                     \
+        if(auto* __Ptr = Async::SafeCastReturnPtr<std::decay_t<decltype(val)>>(__AsyncSelf)) \
+            *__Ptr = std::move(val);                                                         \
+        else                                                                                 \
+            __AsyncSelf->SetError(Async::Error::INTERNAL_FAILURE);                           \
+        __AsyncSelf->Finish();                                                               \
+        return;                                                                              \
+    }                                                                                        \
+    while(0)
+
+// vvv Misc Handling vvv
+#define CoGetError()     __AsyncSelf->GetError()
+#define CoSetError(err)  __AsyncSelf->SetError(err)
+
+#define CoVariable(type, name, ...) \
+    auto& name = __AsyncSelf->PersistLocal(#name).InitOrGet<type>(__VA_ARGS__)
 
 #endif // WFX_INC_ASYNC_MACROS_HPP

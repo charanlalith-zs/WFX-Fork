@@ -4,14 +4,9 @@
 #include "utils/buffer_pool/buffer_pool.hpp"
 #include "utils/math/math.hpp"
 
-#include <atomic>
 #include <mutex>
 #include <shared_mutex>
 #include <cstdint>
-#include <cstring>
-#include <cassert>
-#include <array>
-#include <memory>
 
 namespace WFX::Utils {
 
@@ -27,24 +22,12 @@ class HashShard {
     static constexpr float       KLOAD_FACTOR_GROW   = 0.7f;
     static constexpr float       KLOAD_FACTOR_SHRINK = 0.2f;
 
-    struct Entry {
-        K key;
-        V value;
-        uint8_t probe_length;
-        bool occupied;
-    };
-
-    BufferPool&               pool_;
-    Entry*                    entries_               = nullptr;
-    std::size_t               capacity_              = 0;
-    std::size_t               initialBucketCapacity_ = 0;
-    std::atomic<std::size_t>  size_{0};
-    mutable std::shared_mutex mutex_;
-
 public:
     explicit HashShard(BufferPool& pool);
     ~HashShard();
 
+public: // Main Functions
+    // Initializing
     void Init(std::size_t cap);
     
     // Operations
@@ -61,14 +44,32 @@ public:
     template<typename Fn>
     void ForEachEraseIf(Fn&& cb);
 
+    // Locks
     std::unique_lock<std::shared_mutex> UniqueLock() const;
     std::shared_lock<std::shared_mutex> SharedLock() const;
     std::shared_mutex& Mutex() const;
 
-private:
-    inline bool KeysEqual(const K& a, const K& b) const;
+private: // Helper Functions
+    bool KeysEqual(const K& a, const K& b) const;
     void Resize(std::size_t newCapacity = 0);
     bool BackwardShiftErase(std::size_t pos);
+
+private: // Storage
+    struct Entry {
+        K            key;
+        V            value;
+        std::uint8_t probeLength;
+        bool         occupied;
+    };
+
+    BufferPool& pool_;
+    Entry*      entries_               = nullptr;
+    std::size_t capacity_              = 0;
+    std::size_t initialBucketCapacity_ = 0;
+    std::size_t size_                  = 0;
+
+    // For concurrent hash map, if needed
+    mutable std::shared_mutex mutex_;
 };
 
 } // namespace WFX::Utils

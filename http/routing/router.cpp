@@ -1,5 +1,6 @@
 #include "router.hpp"
 #include "utils/logger/logger.hpp"
+#include "shared/utils/compiler_macro.hpp"
 
 namespace WFX::Http {
 
@@ -22,15 +23,7 @@ const TrieNode* Router::RegisterRoute(HttpMethod method, std::string_view path, 
             Logger::GetInstance().Fatal(
                 "[Router]: Unsupported HTTP method found in RegisterRoute. Use HttpMethod::GET or HttpMethod::POST."
             );
-            // All that to suppress a warning :(
-            #if defined(_MSC_VER)
-                __assume(false);
-            #elif defined(__GNUC__) || defined(__clang__)
-                __builtin_unreachable();
-            #else
-                // Fallback: just return nullptr
-                return nullptr;
-            #endif
+            WFX_UNREACHABLE;
     }
 }
 

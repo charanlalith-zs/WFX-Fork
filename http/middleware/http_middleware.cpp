@@ -1,4 +1,6 @@
 #include "http_middleware.hpp"
+#include "http/connection/http_connection.hpp"
+#include "shared/apis/http_api.hpp"
 #include "utils/logger/logger.hpp"
 
 #include <unordered_set>
@@ -30,26 +32,33 @@ void HttpMiddleware::RegisterPerRouteMiddleware(const TrieNode* node, Middleware
         FixInternalLinks(it->second);
 }
 
-bool HttpMiddleware::ExecuteMiddleware(
+MiddlewareResult HttpMiddleware::ExecuteMiddleware(
     const TrieNode* node, HttpRequest& req, Response& res,
-    MiddlewareType type, MiddlewareBuffer optBuf
+    MiddlewareContext& ctx, MiddlewareBuffer optBuf
 ) {
-    // Initially execute the global middleware stack
-    if(!ExecuteHelper(req, res, middlewareGlobalCallbacks_, type, optBuf))
-        return false;
+    if(ctx.level == MiddlewareLevel::GLOBAL) {
+        // Initially execute the global middleware stack
+        auto [success, ptr] = ExecuteHelper(req, res, middlewareGlobalCallbacks_, ctx, optBuf);
+        if(!success)
+            return {false, ptr};
+
+        // Reset the context to prepare for per route if it exists
+        ctx.index = 0;
+        ctx.level = MiddlewareLevel::PER_ROUTE;
+    }
 
     // We assume that no node means no per-route middleware
     if(!node)
-        return true;
+        return {true, nullptr};
 
     auto elem = middlewarePerRouteCallbacks_.find(node);
     
     // Node exists but no middleware exist, return true
     if(elem == middlewarePerRouteCallbacks_.end())
-        return true;
+        return {true, nullptr};
 
     // Per route middleware exists, execute it
-    return ExecuteHelper(req, res, elem->second, type, optBuf);
+    return ExecuteHelper(req, res, elem->second, ctx, optBuf);
 }
 
 void HttpMiddleware::LoadMiddlewareFromConfig(MiddlewareConfigOrder order)
@@ -93,79 +102,136 @@ void HttpMiddleware::DiscardFactoryMap()
 }
 
 // vvv Helper Functions vvv
-bool HttpMiddleware::ExecuteHelper(
+MiddlewareResult HttpMiddleware::ExecuteHelper(
     HttpRequest& req, Response& res, MiddlewareStack& stack,
-    MiddlewareType type, MiddlewareBuffer optBuf
+    MiddlewareContext& ctx, MiddlewareBuffer optBuf
 ) {
     std::size_t size = stack.size();
     if(size == 0)
-        return true;
+        return {true, nullptr};
 
-    // Determine head for the selected middleware type
     std::uint16_t head = MiddlewareEntry::END;
 
-    switch(type) {
-        case MiddlewareType::SYNC:
-            head = stack[0].sm ? 0 : stack[0].nextSm;
-            break;
+    // Select the correct 'next' pointer for this middleware type
+    auto next = MiddlewareEntryNext(ctx.type);
 
-        case MiddlewareType::CHUNK_BODY:
-            head = stack[0].cbm ? 0 : stack[0].nextCbm;
-            break;
-
-        case MiddlewareType::CHUNK_END:
-            head = stack[0].cem ? 0 : stack[0].nextCem;
-            break;
+    // Check if we already executed this beforehand, we just need to continue from where we left off
+    if(ctx.index > 0) {
+        head = ctx.index;
+        goto __ContinueMiddleware;
     }
+
+    // Fresh start, find first usable middleware
+    head = (stack[0].handled & static_cast<std::uint8_t>(ctx.type)) ? 0 : (stack[0].*next);
 
     // No middleware for this type
     if(head == MiddlewareEntry::END)
-        return true;
+        return {true, nullptr};
 
+__ContinueMiddleware:
     // Walk the linked list via nextSm / nextCbm / nextCem
     std::uint16_t i = head;
 
     while(i != MiddlewareEntry::END) {
         MiddlewareEntry& entry = stack[i];
-        MiddlewareAction action;
+        MiddlewareMeta   meta  = {ctx.type, optBuf};
 
         // Execute
-        switch(type) {
-            case MiddlewareType::SYNC:       action = entry.sm(req, res);          break;
-            case MiddlewareType::CHUNK_BODY: action = entry.cbm(req, res, optBuf); break;
-            case MiddlewareType::CHUNK_END:  action = entry.cem(req, res);         break;
+        auto [action, asyncPtr] = ExecuteFunction(ctx, entry, req, res, meta);
+
+        // Async function, so we need to store the next valid middleware index because this async function-
+        // -will run in scheduler seperate from this middleware chain, after it completes we need to invoke-
+        // -the next valid scheduler
+        if(asyncPtr) {
+            ctx.index = entry.*next;
+            return {false, asyncPtr};
         }
 
         // Interpret the result
         switch(action) {
             case MiddlewareAction::CONTINUE:
                 // Move to next element of this type
-                if(type == MiddlewareType::SYNC)
-                    i = entry.nextSm;
-                else if(type == MiddlewareType::CHUNK_BODY)
-                    i = entry.nextCbm;
-                else
-                    i = entry.nextCem;
+                i = entry.*next;
                 break;
 
             case MiddlewareAction::SKIP_NEXT:
                 // Skip one element in this chain
-                if(type == MiddlewareType::SYNC && entry.nextSm != MiddlewareEntry::END)
-                    i = stack[entry.nextSm].nextSm;
-                else if(type == MiddlewareType::CHUNK_BODY && entry.nextCbm != MiddlewareEntry::END)
-                    i = stack[entry.nextCbm].nextCbm;
-                else if(type == MiddlewareType::CHUNK_END && entry.nextCem != MiddlewareEntry::END)
-                    i = stack[entry.nextCem].nextCem;
+                if(entry.*next != MiddlewareEntry::END)
+                    i = stack[entry.*next].*next;
                 else
                     i = MiddlewareEntry::END;
                 break;
 
             case MiddlewareAction::BREAK:
-                return false;
+                return {false, nullptr};
         }
     }
 
-    return true;
+    return {true, nullptr};
+}
+
+MiddlewareFunctionResult HttpMiddleware::ExecuteFunction(
+    MiddlewareContext& mctx, MiddlewareEntry& entry,
+    HttpRequest& req, Response& res, MiddlewareMeta meta
+) {
+    auto& logger = WFX::Utils::Logger::GetInstance();
+
+    // Sanity check, this shouldn't happen if user properly set handled types
+    if(std::holds_alternative<std::monostate>(entry.mw)) {
+        logger.Warn(
+            "[HttpMiddleware]: Found empty handler while executing middleware for type: ", (int)meta.type,
+            " Perhaps you forgot to set middleware handling type?"
+        );
+        return {MiddlewareAction::CONTINUE, nullptr};
+    }
+
+    // Check if its a sync function, it directly returns value
+    if(auto* sync = std::get_if<SyncMiddlewareType>(&entry.mw))
+        return {(*sync)(req, res, meta), nullptr};
+
+    // For async function, the return value is stored in AsyncPtr '__Action' value
+    // Yeah ik, weird
+    auto* httpApi = WFX::Shared::GetHttpAPIV1();
+    auto* cctx    = mctx.cctx;
+    auto& async   = std::get<AsyncMiddlewareType>(entry.mw);
+
+    // Set context (type erased) at http api side before calling async callback
+    httpApi->SetGlobalPtrData(static_cast<void*>(cctx));
+
+    auto ptr = async(req, res, meta);
+    if(!ptr)
+        logger.Fatal(
+            "[HttpMiddleware]: Null coroutine detected in executed async middleware. Type: ", (int)meta.type
+        );
+
+    // Temporary context in case async was completed in sync
+    // If it didnt, then we will clear the context and set it at scheduler side
+    MiddlewareAction action;
+
+    ptr->SetReturnPtr(static_cast<void*>(&action));
+    ptr->Resume();
+
+    // Reset to remove dangling references
+    httpApi->SetGlobalPtrData(nullptr);
+
+    // Check if we are done with async, if not return ptr
+    if(!ptr->IsFinished()) {
+        ptr->SetReturnPtr(nullptr);
+        return {{}, ptr};
+    }
+
+    // We were able to finish async in sync, coroutine stack should only have 1 element, itself
+    // If not, big no no
+    if(cctx->coroStack.size() > 1)
+        logger.Fatal(
+            "[HttpMiddleware]: Coroutine stack imbalance detected after async middleware execution."
+            " Type: ", (int)meta.type
+        );
+
+    // Clear out the coroutine stack for future middlewares
+    cctx->coroStack.clear();
+
+    return {static_cast<MiddlewareAction>(action), nullptr};
 }
 
 void HttpMiddleware::FixInternalLinks(MiddlewareStack& stack)
@@ -182,21 +248,24 @@ void HttpMiddleware::FixInternalLinks(MiddlewareStack& stack)
     std::uint16_t lastCem = END;
 
     for(std::uint16_t i = 0; i < size; ++i) {
-        auto& s = stack[i];
+        auto h = stack[i].handled;
 
-        if(s.sm) {
+        // LINEAR
+        if(h & static_cast<std::uint8_t>(MiddlewareType::LINEAR)) {
             if(lastSm != END)
                 stack[lastSm].nextSm = i;
             lastSm = i;
         }
 
-        if(s.cbm) {
+        // STREAM_CHUNK
+        if(h & static_cast<std::uint8_t>(MiddlewareType::STREAM_CHUNK)) {
             if(lastCbm != END)
                 stack[lastCbm].nextCbm = i;
             lastCbm = i;
         }
 
-        if(s.cem) {
+        // STREAM_END
+        if(h & static_cast<std::uint8_t>(MiddlewareType::STREAM_END)) {
             if(lastCem != END)
                 stack[lastCem].nextCem = i;
             lastCem = i;

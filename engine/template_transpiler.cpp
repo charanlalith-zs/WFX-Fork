@@ -850,7 +850,7 @@ bool TemplateEngine::GenerateCxxFromIR(
  * AUTO-GENERATED FILE, DO NOT MODIFY :)
  */
 #include "engine/template_interface.hpp"
-#include "shared/utils/export_macro.hpp"
+#include "shared/utils/compiler_macro.hpp"
 
 using Json = nlohmann::json;
 

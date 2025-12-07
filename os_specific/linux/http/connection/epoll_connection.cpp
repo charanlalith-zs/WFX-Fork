@@ -41,9 +41,12 @@ void EpollConnectionHandler::Initialize(const std::string& host, int port)
     auto& osConfig      = config_.osSpecificConfig;
     auto& networkConfig = config_.networkConfig;
 
+    // Round up to 64-bit boundary so every allocated bit always maps to valid storage
+    std::uint32_t roundedSlots = (networkConfig.maxConnections + 63) & ~63u;
+    connWords_ = roundedSlots >> 6;
+
     // Connections
-    connWords_   = (networkConfig.maxConnections + 63) / 64;
-    connections_ = std::make_unique<ConnectionContext[]>(networkConfig.maxConnections);
+    connections_ = std::make_unique<ConnectionContext[]>(roundedSlots);
     connBitmap_  = std::make_unique<std::uint64_t[]>(connWords_);
     // Events
     events_      = std::make_unique<epoll_event[]>(maxEvents_);
@@ -220,7 +223,7 @@ void EpollConnectionHandler::WriteFile(ConnectionContext* ctx, std::string path)
 {
     // Before we proceed, ensure stuffs ready for file operation
     if(!EnsureFileReady(ctx, std::move(path))) {
-        Write(ctx, internalError);
+        Write(ctx, HttpError::internalError);
         return;
     }
 
@@ -479,7 +482,7 @@ void EpollConnectionHandler::Run()
             if(ev & EPOLLIN) {
                 // Check per ip request rate BEFORE processing anything
                 if(!ipLimiter_.AllowRequest(ctx->connInfo)) {
-                    Write(ctx, tooManyRequests);
+                    Write(ctx, HttpError::tooManyRequests);
                     Close(ctx);
                     continue;
                 }
@@ -526,25 +529,36 @@ void EpollConnectionHandler::Stop()
 
 // vvv Helper Functions vvv
 //  --- Connection Handlers ---
-std::int64_t EpollConnectionHandler::AllocSlot(
-    std::uint64_t* bitmap, std::uint32_t numWords, std::uint32_t maxSlots
-)
+std::int64_t EpollConnectionHandler::AllocSlot(std::uint64_t* bitmap, std::uint32_t numWords)
 {
-    for(std::uint32_t w = 0; w < numWords; w++) {
-        std::uint64_t bits = bitmap[w];
+    // Rn this is purely used for Connection slot handling, but still made a seperate function-
+    // -incase in future i need to use this for other common stuff
+    std::uint32_t w = connLastIndex_;
 
-        // If even a single '0' exists in the bitmap, we will take it
-        // '0' means free slot
-        if(~bits) {
-            int          bit = __builtin_ctzll(~bits);
-            std::int64_t idx = (w << 6) + bit;
-            if(idx < maxSlots) {
-                bitmap[w] |= (1ULL << bit);
-                return idx;
-            }
+    // Primary scan: from last index to end
+    for(; w < numWords; ++w) {
+        std::uint64_t inv = ~bitmap[w];
+        if(inv) {
+            int bit = __builtin_ctzll(inv);
+            bitmap[w] |= 1ULL << bit;
+            connLastIndex_ = w;
+            return (std::int64_t(w) << 6) + bit;
         }
     }
-    return -1;
+
+    // Wrap around scan: from start to old index
+    w = 0;
+    for(; w < connLastIndex_; ++w) {
+        std::uint64_t inv = ~bitmap[w];
+        if(inv) {
+            int bit = __builtin_ctzll(inv);
+            bitmap[w] |= 1ULL << bit;
+            connLastIndex_ = w;
+            return (std::int64_t(w) << 6) + bit;
+        }
+    }
+
+    return -1; // Fully exhausted
 }
 
 void EpollConnectionHandler::FreeSlot(std::uint64_t* bitmap, std::uint32_t idx)
@@ -556,7 +570,7 @@ void EpollConnectionHandler::FreeSlot(std::uint64_t* bitmap, std::uint32_t idx)
 
 ConnectionContext* EpollConnectionHandler::GetConnection()
 {
-    std::int64_t idx = AllocSlot(connBitmap_.get(), connWords_, config_.networkConfig.maxConnections);
+    std::int64_t idx = AllocSlot(connBitmap_.get(), connWords_);
     if(idx < 0)
         return nullptr;
 
@@ -742,7 +756,7 @@ void EpollConnectionHandler::SendFile(ConnectionContext* ctx)
         logger_.Warn("[Epoll]: SendFile expects ctx->fileInfo to be set, got nullptr");
         ctx->ClearContext();
         ctx->SetConnectionState(ConnectionState::CONNECTION_CLOSE);
-        Write(ctx, internalError);
+        Write(ctx, HttpError::internalError);
         return;
     }
 

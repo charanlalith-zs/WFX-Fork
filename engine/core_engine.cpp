@@ -14,6 +14,18 @@
     #include <dlfcn.h>
 #endif
 
+// Helper Macros
+#define TRACK_MAKE(depth, type, level, index)              \
+    ((static_cast<std::uint32_t>(depth)  << 24) |          \
+      ((static_cast<std::uint32_t>(type)  & 0x0F) << 20) | \
+      ((static_cast<std::uint32_t>(level) & 0x0F) << 16) | \
+        static_cast<std::uint32_t>(index))
+
+#define TRACK_GET_DEPTH(v)   (static_cast<ExecutionLevel>(((v) >> 24) & 0xFF))
+#define TRACK_GET_TYPE(v)    (static_cast<MiddlewareType>(((v) >> 20) & 0x0F))
+#define TRACK_GET_LEVEL(v)   (static_cast<MiddlewareLevel>(((v) >> 16) & 0x0F))
+#define TRACK_GET_INDEX(v)   (static_cast<std::uint16_t>((v) & 0xFFFF))
+
 namespace WFX::Core {
 
 // Some internal enum stuff for connection header
@@ -23,6 +35,13 @@ enum ConnectionHeader : std::uint8_t {
     KEEP_ALIVE = 1 << 1,
     UPGRADE    = 1 << 2,
     ERROR      = 1 << 3,
+};
+
+// Used inside of ctx->trackBytes if needed by 'HandleSuccess'
+// Just an optimization so if we do have async code, we don't need to start from top again
+enum ExecutionLevel : std::uint8_t {
+    MIDDLEWARE,
+    RESPONSE
 };
 
 // vvv Main Functions vvv
@@ -72,18 +91,10 @@ void CoreEngine::HandleRequest(ConnectionContext* ctx)
     if(!ctx->responseInfo)
         ctx->responseInfo = new HttpResponse{};
 
-    auto* httpApi       = WFX::Shared::GetHttpAPIV1();
     auto& res           = *ctx->responseInfo;
     auto& networkConfig = config_.networkConfig;
 
-    // Simple lambda to finish the reset some important states without my dumbass forgetting to do it
-    auto FinishRequest = [&](ConnectionContext* ctx) {
-        ctx->SetParseState(HttpParseState::PARSE_IDLE);
-        connHandler_->RefreshExpiry(ctx, networkConfig.idleTimeout);
-    };
-
     // Main shit
-    Response userRes{&res, httpApi};
     HttpParseState state = HttpParser::Parse(ctx);
 
     switch(state)
@@ -109,6 +120,27 @@ void CoreEngine::HandleRequest(ConnectionContext* ctx)
 
         case HttpParseState::PARSE_SUCCESS:
         {
+            // IMPORTANT:
+            // After parsing, ctx->trackBytes becomes the compact state register used by-
+            // -'HandleSuccess' for async resumption IF needed that is. The layout is:
+            //
+            // 32-bit trackBytes:
+            // ┌─────────────────────────── 32 bits ──────────────────────────────┐
+            // │            HIGH 16 bits               │       LOW 16 bits        │
+            // ├───────────────────────────────────────┼──────────────────────────┤
+            // │  Depth (8) | Type (4) | Level (4)     │   Middleware index (16)  │
+            // └───────────────────────────────────────┴──────────────────────────┘
+            //
+            // Meaning:
+            // - Depth (8) : how deep we are in the execution path, used to decide whether-
+            //               -to continue middleware execution or jump back into user callback
+            // - Type  (4) :  encoded middleware type
+            // - Level (4) : current middleware layer being executed
+            // - Index (16): the specific middleware entry index
+            //
+            // For now reset ctx->trackBytes for it to be used in 'HandleSuccess'
+            ctx->trackBytes = 0;
+
             // Version is important for Serializer to properly create a response
             // HTTP/1.1 and HTTP/2 have different formats duh
             res.version = ctx->requestInfo->version;
@@ -120,7 +152,7 @@ void CoreEngine::HandleRequest(ConnectionContext* ctx)
             // RFC violation, close connection
             if(connMask & ConnectionHeader::ERROR) {
                 ctx->SetConnectionState(ConnectionState::CONNECTION_CLOSE);
-                connHandler_->Write(ctx, badRequest);
+                connHandler_->Write(ctx, HttpError::badRequest);
                 return;
             }
 
@@ -170,43 +202,16 @@ void CoreEngine::HandleRequest(ConnectionContext* ctx)
                         .SendText("404: Route not found :(");
                     goto __HandleResponse;
                 }
-                                
-                if(!middleware_.ExecuteMiddleware(node, reqInfo, userRes, MiddlewareType::SYNC))
-                    goto __HandleResponse;
 
-                // Sync, execute it right now
-                if(auto* sync = std::get_if<SyncCallbackType>(&node->callback))
-                    (*sync)(reqInfo, userRes);
+                // Before handing of control to 'HandleSuccess', setup ctx->trackBytes according to-
+                // -the format we decided above
+                ctx->trackBytes = TRACK_MAKE(
+                                    ExecutionLevel::MIDDLEWARE, MiddlewareType::LINEAR,
+                                    MiddlewareLevel::GLOBAL, 0
+                                );
 
-                // Async, check if we have executed it entirely right now, if not-
-                // -schedule it for later
-                else {
-                    auto& async = std::get<AsyncCallbackType>(node->callback);
-
-                    // Set context (type erased) at http api side before calling async callback
-                    // And also erase it after callback is done, if the callback hasn't finished, the-
-                    // -scheduler will set the ptr later on when needed, no need to keep a dangling pointer
-                    httpApi->SetGlobalPtrData(static_cast<void*>(ctx));
-
-                    auto coro = async(reqInfo, userRes);
-
-                    httpApi->SetGlobalPtrData(nullptr);
-
-                    // Fuck up the server, something went wrong, shouldn't happen
-                    if(!coro)
-                        logger_.Fatal("[CoreEngine]: Null coroutine detected in active connection context, aborting");
-
-                    // (Async path)
-                    if(!coro->IsFinished()) {
-                        FinishRequest(ctx);
-                        return;
-                    }
-
-                    // So if coroutine is done, then the user defined lambda should be the only thing-
-                    // -existing inside of 'ctx->coroStack'. If anything else remains, thats a big no no
-                    if(ctx->coroStack.size() > 1)
-                        logger_.Fatal("[CoreEngine]: Coroutine stack imbalance detected after completion, aborting");
-                }
+                HandleSuccess(ctx, node);
+                return;
             }
 
         __HandleResponse:
@@ -217,13 +222,13 @@ void CoreEngine::HandleRequest(ConnectionContext* ctx)
 
         case HttpParseState::PARSE_ERROR:
             ctx->SetConnectionState(ConnectionState::CONNECTION_CLOSE);
-            connHandler_->Write(ctx, badRequest);
+            connHandler_->Write(ctx, HttpError::badRequest);
             return;
 
         case HttpParseState::PARSE_STREAMING_BODY:
         default:
             ctx->SetConnectionState(ConnectionState::CONNECTION_CLOSE);
-            connHandler_->Write(ctx, notImplemented);
+            connHandler_->Write(ctx, HttpError::notImplemented);
             return;
     }
 }
@@ -261,7 +266,93 @@ void CoreEngine::HandleResponse(ConnectionContext* ctx)
     }
 }
 
+void CoreEngine::HandleSuccess(ConnectionContext* ctx, const TrieNode* node)
+{
+    auto* httpApi = WFX::Shared::GetHttpAPIV1();
+    auto& req     = *ctx->requestInfo;
+    auto& res     = *ctx->responseInfo;
+
+    // Track info
+    std::uint32_t trackBytes = ctx->trackBytes;
+
+    ExecutionLevel eLevel = TRACK_GET_DEPTH(trackBytes);
+    Response userRes{&res, httpApi};
+
+    if(eLevel == ExecutionLevel::RESPONSE)
+        goto __HandleResponse;
+
+    if(eLevel == ExecutionLevel::MIDDLEWARE) {
+        MiddlewareLevel mLevel = TRACK_GET_LEVEL(trackBytes);
+        MiddlewareType  mType  = TRACK_GET_TYPE(trackBytes);
+        std::uint16_t   mIndex = TRACK_GET_INDEX(trackBytes);
+
+        MiddlewareContext mctx{mType, mLevel, mIndex, ctx};
+
+        auto [success, ptr] = middleware_.ExecuteMiddleware(node, req, userRes, mctx, {});
+
+        if(!success) {
+            // For failure, just handle response and be done with
+            if(!ptr)
+                goto __HandleResponse;
+
+            // Its async, update track bytes according to mctx as it is updated in execute middleware
+            ctx->trackBytes = TRACK_MAKE(eLevel, mctx.type, mctx.level, mctx.index);
+            return;
+        }
+        // Update 'eLevel' to be 'RESPONSE' level so the next time this shits called, we-
+        // -directly jump to '__HandleResponse'
+        eLevel = ExecutionLevel::RESPONSE;
+    }
+
+    // Sync, execute it right now
+    if(auto* sync = std::get_if<SyncCallbackType>(&node->callback))
+        (*sync)(req, userRes);
+
+    // Async, check if we have executed it entirely right now, if not-
+    // -schedule it for later
+    else {
+        auto& async = std::get<AsyncCallbackType>(node->callback);
+
+        // Set context (type erased) at http api side before calling async callback
+        // And also erase it after callback is done, if the callback hasn't finished, the-
+        // -scheduler will set the ptr later on when needed, no need to keep a dangling pointer
+        httpApi->SetGlobalPtrData(static_cast<void*>(ctx));
+
+        auto coro = async(req, userRes);
+        if(!coro)
+            logger_.Fatal("[CoreEngine]: Null coroutine detected in active connection context, aborting");
+
+        coro->Resume();
+
+        // Reset to remove any dangling references
+        httpApi->SetGlobalPtrData(nullptr);
+
+        // (Async path)
+        if(!coro->IsFinished()) {
+            FinishRequest(ctx);
+            return;
+        }
+
+        // So if coroutine is done, then the user defined lambda should be the only thing-
+        // -existing inside of 'ctx->coroStack'. If anything else remains, thats a big no no
+        if(ctx->coroStack.size() > 1)
+            logger_.Fatal(
+                "[CoreEngine]: Coroutine stack imbalance detected after async user callback execution, aborting"
+            );
+    }
+
+__HandleResponse:
+    FinishRequest(ctx);
+    HandleResponse(ctx);
+}
+
 // vvv Helper Functions vvv
+void CoreEngine::FinishRequest(ConnectionContext* ctx)
+{
+    ctx->SetParseState(HttpParseState::PARSE_IDLE);
+    connHandler_->RefreshExpiry(ctx, config_.networkConfig.idleTimeout);
+}
+
 std::uint8_t CoreEngine::HandleConnectionHeader(std::string_view header)
 {
     std::uint8_t mask  = ConnectionHeader::NONE;

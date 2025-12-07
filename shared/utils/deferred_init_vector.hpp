@@ -2,31 +2,31 @@
 #define WFX_SHARED_DEFERRED_INIT_VECTOR_HPP
 
 #include <vector>
-#include <functional>
 
 namespace WFX::Shared {
 
-using FunctionVector = std::vector<std::function<void()>>;
+using DeferredCallback = void(*)();
+using DeferredVector   = std::vector<DeferredCallback>;
 
-inline FunctionVector& __WFXDeferredConstructors()
+inline DeferredVector& __WFXDeferredConstructors()
 {
-    static FunctionVector constructorsReg;
+    static DeferredVector constructorsReg;
     return constructorsReg;
 }
 
-inline FunctionVector& __WFXDeferredRoutes()
+inline DeferredVector& __WFXDeferredRoutes()
 {
-    static FunctionVector routesReg;
+    static DeferredVector routesReg;
     return routesReg;
 }
 
-inline FunctionVector& __WFXDeferredMiddleware()
+inline DeferredVector& __WFXDeferredMiddleware()
 {
-    static FunctionVector middlewareReg;
+    static DeferredVector middlewareReg;
     return middlewareReg;
 }
 
-inline void __EraseDeferredVector(FunctionVector& deferredVector)
+inline void __EraseDeferredVector(DeferredVector& deferredVector)
 {
     deferredVector.clear();
     deferredVector.shrink_to_fit();

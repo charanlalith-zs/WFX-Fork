@@ -22,8 +22,10 @@ public: // Main Stuff
 private: // Internal Functions
     void HandleRequest(ConnectionContext* ctx);
     void HandleResponse(ConnectionContext* ctx);
+    void HandleSuccess(ConnectionContext* ctx, const TrieNode* node);
 
 private: // Helper Functions
+    void         FinishRequest(ConnectionContext* ctx);
     std::uint8_t HandleConnectionHeader(std::string_view header);
     void         HandleUserDLLInjection(const char* dllDir);
     void         HandleMiddlewareLoading();

@@ -6,13 +6,34 @@
 
 namespace WFX::Http {
 
-// Forward declare TrieNode*, defined inside of routing/route_segment.hpp
+// Forward declare TrieNode and ConnectionContext
+// Each defined inside of routing/route_segment.hpp and connection/http_connection.hpp
 struct TrieNode;
+struct ConnectionContext;
 
 using MiddlewareName        = std::string_view;
 using MiddlewareConfigOrder = const std::vector<std::string>&;
 using MiddlewareFactory     = std::unordered_map<MiddlewareName, MiddlewareEntry>;
 using MiddlewarePerRoute    = std::unordered_map<const TrieNode*, MiddlewareStack>;
+
+// So for async routes we need this to determine whether we are executing global-
+// -mw or per route middleware
+enum class MiddlewareLevel : std::uint8_t {
+    GLOBAL,
+    PER_ROUTE
+};
+
+struct MiddlewareContext {
+    MiddlewareType     type;  // Context of where mw is being used
+    MiddlewareLevel    level; // Global or Per-Route
+    std::uint16_t      index; // Index of mw where we left off
+    ConnectionContext* cctx;
+};
+
+// 1st parameter is whether we successfully executed all middleware or no
+// 2nd parameter is for async functionality
+using MiddlewareResult         = std::pair<bool, AsyncPtr>;
+using MiddlewareFunctionResult = std::pair<MiddlewareAction, AsyncPtr>;
 
 class HttpMiddleware {
 public:
@@ -22,10 +43,10 @@ public:
 public:
     void RegisterMiddleware(MiddlewareName name, MiddlewareEntry mw);
     void RegisterPerRouteMiddleware(const TrieNode* node, MiddlewareStack mwStack);
-    
-    bool ExecuteMiddleware(const TrieNode* node, HttpRequest& req, Response& res,
-                            MiddlewareType type, MiddlewareBuffer optBuf = {});
-    
+
+    MiddlewareResult ExecuteMiddleware(const TrieNode* node, HttpRequest& req, Response& res,
+                            MiddlewareContext& ctx, MiddlewareBuffer optBuf = {});
+
     // Using std::string because TOML loader returns vector<string>
     void LoadMiddlewareFromConfig(MiddlewareConfigOrder order);
 
@@ -36,8 +57,11 @@ private:
     HttpMiddleware& operator=(const HttpMiddleware&) = delete;
 
 private: // Helper functions
-    bool ExecuteHelper(HttpRequest& req, Response& res, MiddlewareStack& stack,
-                        MiddlewareType type, MiddlewareBuffer optBuf);
+    MiddlewareResult ExecuteHelper(HttpRequest& req, Response& res, MiddlewareStack& stack,
+                        MiddlewareContext& ctx, MiddlewareBuffer optBuf);
+    MiddlewareFunctionResult ExecuteFunction(MiddlewareContext& mctx, MiddlewareEntry& entry, HttpRequest& req,
+                        Response& res, MiddlewareMeta meta);
+
     void FixInternalLinks(MiddlewareStack& stack);
 
 private:

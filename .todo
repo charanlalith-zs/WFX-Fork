@@ -29,4 +29,5 @@ To Fix:
 1. Cache files < 4KB, don't use TransmitFile / sendfile on every single file
 2. Batch syscalls (for receving and sending data) instead of spamming them every request
 3. Timer wheel shouldn't expire connections inline, or for larger count it will stall backend pipeline
-4. ADD PROPER ERROR CHECKING FOR ASYNC TIMER OPERATIONS, RN IT WORKS BUT NOT SO MUCH ERROR CHECKING
+4. ADD PROPER ERROR CHECKING FOR ASYNC TIMER OPERATIONS (High failure rate rn at high concurrency)  [Partially fixed]
+5. [Assertion `pos < cap_ && "TimerWheel.Schedule expected pos < capacity"' failed.]... How tf is timer wheel even failing??

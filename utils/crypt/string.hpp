@@ -6,24 +6,19 @@
 
 namespace WFX::Utils {
 
-class StringSanitizer final {
-public:
-    static std::uint8_t ToLowerAscii(std::uint8_t c);
+namespace StringSanitizer {
+    std::uint8_t ToLowerAscii(std::uint8_t c);
 
     // Constant time comparisions
-    static bool CTStringCompare(std::string_view lhs, std::string_view rhs);
-    static bool CTInsensitiveStringCompare(std::string_view lhs, std::string_view rhs);
+    bool CTStringCompare(std::string_view lhs, std::string_view rhs);
+    bool CTInsensitiveStringCompare(std::string_view lhs, std::string_view rhs);
 
-    static bool CaseInsensitiveCompare(std::string_view lhs, std::string_view rhs);
+    bool CaseInsensitiveCompare(std::string_view lhs, std::string_view rhs);
 
     /* NOTE: 'path' buffer must be a valid writable buffer */
-    static bool        NormalizeURIPathInplace(std::string_view& path);
-    static std::string NormalizePathToIdentifier(std::string_view path, std::string_view prefix);
-
-private:
-    StringSanitizer()  = delete;
-    ~StringSanitizer() = delete;
-};
+    bool        NormalizeURIPathInplace(std::string_view& path);
+    std::string NormalizePathToIdentifier(std::string_view path, std::string_view prefix);
+} // namespace StringSanitizer
 
 } // namespace WFX::Utils
 

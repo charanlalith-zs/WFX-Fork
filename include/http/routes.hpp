@@ -47,8 +47,6 @@
 #define WFX_GET_EX(path, mw, cb)  WFX_INTERNAL_ROUTE_REGISTER_EX(GET, path, mw, MakeHttpCallbackFromLambda(cb))
 #define WFX_POST_EX(path, mw, cb) WFX_INTERNAL_ROUTE_REGISTER_EX(POST, path, mw, MakeHttpCallbackFromLambda(cb))
 
-#define WFX_MW_EX(...) MakeMiddlewareFromFunctions(__VA_ARGS__)
-
 // vvv ROUTE GROUPING vvv
 #define WFX_GROUP_START_IMPL(path, id)                                \
     static struct WFX_CONCAT(WFXGroupStart_, id) {                    \
@@ -70,5 +68,14 @@
 
 #define WFX_GROUP_START(path) WFX_GROUP_START_IMPL(path, __COUNTER__)
 #define WFX_GROUP_END()       WFX_GROUP_END_IMPL(__COUNTER__)
+
+// vvv PATH SEGMENT HELPERS vvv
+/*
+ * Note: Used inside of function so typing style would be PascalCase not UPPER_SNAKE_CASE
+ */
+#define GetPathAsString(path) std::get<std::string_view>(path)
+#define GetPathAsInt(path)    std::get<std::int64_t>(path)
+#define GetPathAsUInt(path)   std::get<std::uint64_t>(path)
+#define GetPathAsUUID(path)   std::get<WFX::Utils::UUID>(path)
 
 #endif // WFX_INC_HTTP_ROUTE_MACROS_HPP

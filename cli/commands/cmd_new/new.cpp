@@ -98,7 +98,7 @@ cache_chunk_size    = 2048   # Max chunk size to read / write from template cach
     // Default route
     CreateFile(projBase / "src/api_entry.cpp", R"(#include <shared/apis/master_api.hpp>
 #include <shared/utils/deferred_init_vector.hpp>
-#include <shared/utils/export_macro.hpp>
+#include <shared/utils/compiler_macro.hpp>
 
 // WARNING: DO NOT MODIFY THIS SYMBOL OR THIS FILE
 // __WFXApi is reserved for WFX internal API injection

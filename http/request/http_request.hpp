@@ -42,7 +42,7 @@ public: // Helper functions
         context[key] = std::forward<T>(value);
     }
 
-    template <typename T>
+    template<typename T>
     const T* GetContext(const std::string& key) const
     {
         auto it = context.find(key);
@@ -50,6 +50,16 @@ public: // Helper functions
             return nullptr;
         
         return std::any_cast<const T>(&(it->second));
+    }
+
+    template<typename T>
+    const T* InitOrGetContext(const std::string& key, T&& value)
+    {
+        auto& slot = context[key];
+        if(!slot.has_value())
+            slot = std::forward<T>(value);
+
+        return std::any_cast<T>(&slot);
     }
 
     void EraseContext(const std::string& key) noexcept

@@ -13,6 +13,7 @@
 #include "utils/timer/timer_heap/timer_heap.hpp"
 
 #include <sys/epoll.h>
+#include <atomic>
 
 namespace WFX::OSSpecific {
 
@@ -45,7 +46,7 @@ public: // Main Functions
     void Stop()                                                                     override;
 
 private: // Helper Functions
-    std::int64_t       AllocSlot(std::uint64_t* bitmap, std::uint32_t numWords, std::uint32_t maxSlots);
+    std::int64_t       AllocSlot(std::uint64_t* bitmap, std::uint32_t numWords);
     void               FreeSlot(std::uint64_t* bitmap, std::uint32_t idx);
     ConnectionContext* GetConnection();
     void               ReleaseConnection(ConnectionContext* ctx);
@@ -102,9 +103,10 @@ private: // Epoll + SSL
     std::unique_ptr<epoll_event[]> events_     = nullptr;
 
 private: // Connection Context
-    std::unique_ptr<ConnectionContext[]> connections_ = nullptr;
-    std::unique_ptr<std::uint64_t[]>     connBitmap_  = nullptr;
-    std::uint32_t                        connWords_   = 0;
+    std::unique_ptr<ConnectionContext[]> connections_   = nullptr;
+    std::unique_ptr<std::uint64_t[]>     connBitmap_    = nullptr;
+    std::uint32_t                        connWords_     = 0;
+    std::uint32_t                        connLastIndex_ = 0;
 
     // TODO: FOR DEBUG ONLY, REMOVE IT AFTER
     std::uint64_t numConnectionsAlive_ = 0;

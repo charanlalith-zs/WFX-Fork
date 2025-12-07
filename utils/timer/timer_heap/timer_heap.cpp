@@ -36,8 +36,9 @@ bool TimerHeap::Insert(std::uint64_t data, std::uint64_t delay, std::uint64_t de
 bool TimerHeap::Remove(std::uint64_t data) noexcept
 {
     std::size_t* heapIdx = idMap_.Get(data);
+    // Already removed, treat as success
     if(!heapIdx)
-        return false;
+        return true;
 
     std::size_t idx = *heapIdx;
 
@@ -55,10 +56,14 @@ bool TimerHeap::Remove(std::uint64_t data) noexcept
         target         = last;
         target.heapIdx = idx;
 
-        // Update map, rollback everything on failure
-        if(!idMap_.Insert(last.data, idx)) {
-            heap_[idx] = backupTarget;
+        // Target = last already done
+        if(auto* idxPtr = idMap_.Get(last.data))
+            *idxPtr = idx;
+        else {
+            // If this ever triggers, map is corrupted
+            heap_[idx]     = backupTarget;
             heap_[lastIdx] = backupLast;
+            idMap_.Insert(backupTarget.data, idx);
             return false;
         }
 
@@ -97,39 +102,31 @@ std::size_t TimerHeap::Size() const noexcept
 // vvv Helper Functions vvv
 void TimerHeap::FixHeap(std::size_t idx) noexcept
 {
-    TimerNode&  node   = heap_[idx];
-    std::size_t parent = (idx - 1) / 2;
-
-    // Decide direction
-    if(idx > 0 && node.delay < heap_[parent].delay) {
-        // Sift up only
-        while(idx > 0) {
-            if(node.delay >= heap_[parent].delay)
-                break;
-
-            SwapNodes(node, heap_[parent]);
-            idx   = parent;
-            parent = (idx - 1) / 2;
-        }
+    // Try sift-up
+    while(idx > 0) {
+        std::size_t parent = (idx - 1) / 2;
+        if(heap_[idx].delay >= heap_[parent].delay)
+            break;
+        SwapNodes(heap_[idx], heap_[parent]);
+        idx = parent;
     }
-    else {
-        // Sift down only
-        std::size_t n = heap_.size();
-        while(true) {
-            std::size_t smallest = idx;
-            std::size_t l = 2 * idx + 1;
-            std::size_t r = 2 * idx + 2;
 
-            TimerNode& smallestNode = heap_[smallest];
+    // Then sift-down
+    std::size_t n = heap_.size();
+    while(true) {
+        std::size_t smallest = idx;
+        std::size_t l = 2 * idx + 1;
+        std::size_t r = 2 * idx + 2;
 
-            if(l < n && heap_[l].delay < smallestNode.delay) smallest = l;
-            if(r < n && heap_[r].delay < smallestNode.delay) smallest = r;
-            if(smallest == idx)
-                break;
+        if(l < n && heap_[l].delay < heap_[smallest].delay)
+            smallest = l;
+        if(r < n && heap_[r].delay < heap_[smallest].delay)
+            smallest = r;
+        if(smallest == idx)
+            break;
 
-            SwapNodes(heap_[idx], smallestNode);
-            idx = smallest;
-        }
+        SwapNodes(heap_[idx], heap_[smallest]);
+        idx = smallest;
     }
 }
 

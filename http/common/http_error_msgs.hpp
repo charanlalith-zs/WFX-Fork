@@ -2,6 +2,7 @@
 #define WFX_HTTP_ERROR_MESSAGES_HPP
 
 namespace WFX::Http {
+namespace HttpError {
 
 // 400 Bad Request
 static constexpr const char* badRequest =
@@ -92,6 +93,7 @@ static constexpr const char* tooManyRequests =
     "\r\n"
     "Too Many Requests";
 
+} // namespace HttpError
 } // namespace WFX::Http
 
 #endif // WFX_HTTP_ERROR_MESSAGES_HPP

@@ -117,11 +117,11 @@ struct ConnectionContext : public ConnectionTag {
         std::uint16_t __Flags = 0;
     };
 
-    std::uint32_t trackBytes = 0;                  // 4 bytes
+    std::uint32_t trackBytes = 0;                  // 4 bytes (Used in HTTP parsing then async tracking if needed)
     void*         sslConn    = nullptr;            // 8 bytes
-    
+
     WFX::Utils::RWBuffer rwBuffer;                 // 16 bytes
-    
+
     WFXSocket       socket             = -1;       // 4 | 8 bytes
     StreamGenerator streamGenerator    = {};       // 8 bytes
     HttpRequest*    requestInfo        = nullptr;  // 8 bytes
