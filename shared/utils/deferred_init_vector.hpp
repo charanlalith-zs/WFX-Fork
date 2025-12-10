@@ -8,23 +8,10 @@ namespace WFX::Shared {
 using DeferredCallback = void(*)();
 using DeferredVector   = std::vector<DeferredCallback>;
 
-inline DeferredVector& __WFXDeferredConstructors()
-{
-    static DeferredVector constructorsReg;
-    return constructorsReg;
-}
-
-inline DeferredVector& __WFXDeferredRoutes()
-{
-    static DeferredVector routesReg;
-    return routesReg;
-}
-
-inline DeferredVector& __WFXDeferredMiddleware()
-{
-    static DeferredVector middlewareReg;
-    return middlewareReg;
-}
+// Inline variables so they can be same across all translation units
+inline DeferredVector __WFXDeferredConstructors;
+inline DeferredVector __WFXDeferredRoutes;
+inline DeferredVector __WFXDeferredMiddleware;
 
 inline void __EraseDeferredVector(DeferredVector& deferredVector)
 {

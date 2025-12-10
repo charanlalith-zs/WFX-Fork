@@ -42,14 +42,14 @@ send_buffer_max              = 2048    # Max total send buffer size per connecti
 recv_buffer_max              = 16384   # Max total recv buffer size per connection (in bytes)
 recv_buffer_incr             = 4096    # Buffer growth step (in bytes)
 file_cache_size              = 20      # Max number of files kept in memory cache (LFU)
-header_reserve_hint          = 512     # Initial header allocation hint size
-max_header_size              = 8192    # Max total size of all headers
+header_reserve_hint          = 512     # Initial header allocation hint size (in bytes)
+max_header_size              = 8192    # Max total size of all headers (in bytes)
 max_header_count             = 64      # Max number of headers allowed
-max_body_size                = 8192    # Max size of request body
-header_timeout               = 15      # Max time limit for entire header to arrive. After that the connection closes
-body_timeout                 = 20      # Max time limit for entire body to arrive. After that the connection closes
-idle_timeout                 = 40      # Max time limit for a connection to stay idle. After that the connection closes
-max_connections              = 10000   # Max total concurrent connections
+max_body_size                = 8192    # Max size of request body (in bytes)
+header_timeout               = 15      # Max time limit for entire header to arrive (in seconds)
+body_timeout                 = 20      # Max time limit for entire body to arrive (in seconds)
+idle_timeout                 = 40      # Max time limit for a connection to stay idle (in seconds)
+max_connections              = 10000   # Max total concurrent connections (Rounded up to the nearest multiple of 64)
 max_connections_per_ip       = 20      # Per-IP connection cap
 max_request_burst_per_ip     = 10      # Initial request tokens per IP
 max_requests_per_ip_per_sec  = 5       # Refill rate (tokens per second per IP)
@@ -68,7 +68,7 @@ curves               = "X25519:P-256"  # Elliptic curves preference list for ECD
 enable_session_cache = true            # Enable server-side session caching
 enable_ktls          = false           # Enable Kernel TLS (KTLS) if supported
 session_cache_size   = 32768           # Max number of cached sessions
-min_proto_version    = 2               # Minimum TLS protocol version (1->TLSv1.1, 2->TLSv1.2, 3->TLSv1.3)
+min_proto_version    = 3               # Minimum TLS protocol version (1->TLSv1.1, 2->TLSv1.2, 3->TLSv1.3)
 security_level       = 2               # SSL security level (0-5)
 
 [Windows]
@@ -91,8 +91,8 @@ max_events       = 1024   # How many events should epoll handle at a time
 
 [Misc]
 file_cache_size     = 20     # Number of files cached for efficiency
-template_chunk_size = 16384  # Max chunk size to read / write at once when compiling templates
-cache_chunk_size    = 2048   # Max chunk size to read / write from template cache file
+template_chunk_size = 16384  # Max chunk size to read / write at once when compiling templates (in bytes)
+cache_chunk_size    = 2048   # Max chunk size to read / write from template cache file (in bytes)
 )");
 
     // Default route
@@ -116,9 +116,9 @@ extern "C" {
         if(api) {
             __WFXApi = api;
 
-            auto& constructors = WFX::Shared::__WFXDeferredConstructors();
-            auto& middlewares  = WFX::Shared::__WFXDeferredMiddleware();
-            auto& routes       = WFX::Shared::__WFXDeferredRoutes();
+            auto& constructors = WFX::Shared::__WFXDeferredConstructors;
+            auto& middlewares  = WFX::Shared::__WFXDeferredMiddleware;
+            auto& routes       = WFX::Shared::__WFXDeferredRoutes;
 
             for(auto& fn : constructors)
                 fn();

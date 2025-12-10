@@ -93,6 +93,43 @@ struct FileInfo {
 #endif
 };
 
+// Used inside of AsyncTrack if needed by 'HandleSuccess'
+// Just an optimization so if we do have async code, we don't need to start from top again
+enum ExecutionLevel : std::uint8_t {
+    MIDDLEWARE,
+    RESPONSE
+};
+
+// For async tracking without having to make engine / middleware async themselves
+struct AsyncTrack {
+    std::uint32_t trackBytes = 0;
+
+    // Top 8 bits (bits 31..24) - addressable MiddlewareAction
+    MiddlewareAction* GetMAction() { return reinterpret_cast<MiddlewareAction*>(&trackBytes); }
+
+    // Bits 23..22 (2 bits) - Execution level
+    ExecutionLevel GetELevel() const { return static_cast<ExecutionLevel>((trackBytes >> 22) & 0x3u); }
+    void SetELevel(ExecutionLevel v) {
+        trackBytes = (trackBytes & ~(0x3u << 22)) | ((static_cast<std::uint32_t>(v) & 0x3u) << 22);
+    }
+
+    // Bits 21..19 (3 bits) - Middleware type
+    MiddlewareType GetMType() const { return static_cast<MiddlewareType>((trackBytes >> 19) & 0x7u); }
+    void SetMType(MiddlewareType v) {
+        trackBytes = (trackBytes & ~(0x7u << 19)) | ((static_cast<std::uint32_t>(v) & 0x7u) << 19);
+    }
+
+    // Bits 18..17 (2 bits) - Middleware level
+    MiddlewareLevel GetMLevel() const { return static_cast<MiddlewareLevel>((trackBytes >> 17) & 0x3u); }
+    void SetMLevel(MiddlewareLevel v) {
+        trackBytes = (trackBytes & ~(0x3u << 17)) | ((static_cast<std::uint32_t>(v) & 0x3u) << 17);
+    }
+
+    // Bits 15..0 (16 bits) - Index
+    std::uint16_t GetMIndex() const { return static_cast<std::uint16_t>(trackBytes & 0xFFFFu); }
+    void SetMIndex(std::uint16_t idx) { trackBytes = (trackBytes & ~0xFFFFu) | (idx & 0xFFFFu); }
+};
+
 // Simply to assert that eventType must exist in anything related to connection-
 // -and must be the first member as well (offset == 0)
 struct ConnectionTag {
@@ -112,18 +149,21 @@ struct ConnectionContext : public ConnectionTag {
             std::uint16_t isAsyncTimerOperation : 1;   //  |
             std::uint16_t isShuttingDown        : 1;   //  |
             std::uint16_t streamChunked         : 1;   //  |
-            std::uint16_t __Pad                 : 6;   //  V
+            std::uint16_t __FPad                : 6;   //  V
         };                                             // 2 byte
         std::uint16_t __Flags = 0;
     };
 
-    std::uint32_t trackBytes = 0;                  // 4 bytes (Used in HTTP parsing then async tracking if needed)
-    void*         sslConn    = nullptr;            // 8 bytes
+    union {
+        AsyncTrack    trackAsync;                  // |
+        std::uint32_t trackBytes = 0;              // |-> 4 bytes (Used in HTTP parsing then async tracking if needed)
+    };
 
+    void*                sslConn       = nullptr;  // 8 bytes
     WFX::Utils::RWBuffer rwBuffer;                 // 16 bytes
 
     WFXSocket       socket             = -1;       // 4 | 8 bytes
-    StreamGenerator streamGenerator    = {};       // 8 bytes
+    StreamGenerator streamGenerator    = {};       // 8 | 16 bytes
     HttpRequest*    requestInfo        = nullptr;  // 8 bytes
     HttpResponse*   responseInfo       = nullptr;  // 8 bytes (Async functions require larger scope)
     FileInfo*       fileInfo           = nullptr;  // 8 bytes

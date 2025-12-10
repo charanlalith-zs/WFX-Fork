@@ -9,12 +9,14 @@
 
 // Generate once
 #define WFX_INTERNAL_CNSTRCT_REGISTER_IMPL(callback, uniq)       \
-    static struct WFX_CNSTRCT_CLASS(uniq) {                      \
-        WFX_CNSTRCT_CLASS(uniq)() {                              \
-            WFX::Shared::__WFXDeferredConstructors()             \
-                .emplace_back([] callback);                      \
-        }                                                        \
-    } WFX_CNSTRCT_INSTANCE(uniq);
+    namespace {                                                  \
+        struct WFX_CNSTRCT_CLASS(uniq) {                         \
+            WFX_CNSTRCT_CLASS(uniq)() {                          \
+                WFX::Shared::__WFXDeferredConstructors           \
+                    .emplace_back([] callback);                  \
+            }                                                    \
+        } WFX_CNSTRCT_INSTANCE(uniq);                            \
+    }
 
 #define WFX_INTERNAL_CNSTRCT_REGISTER(callback)                  \
     WFX_INTERNAL_CNSTRCT_REGISTER_IMPL(callback, __COUNTER__)

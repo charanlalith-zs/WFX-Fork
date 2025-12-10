@@ -12,15 +12,17 @@
 
 // Generate once
 #define WFX_INTERNAL_MW_REGISTER_IMPL(name, handle, callback, uniq)    \
-    static struct WFX_MW_CLASS(uniq) {                                 \
-        WFX_MW_CLASS(uniq)() {                                         \
-            WFX::Shared::__WFXDeferredMiddleware().emplace_back([] {   \
-                __WFXApi->GetHttpAPIV1()->RegisterMiddleware(          \
-                    name, MakeMiddlewareEntry(callback, handle)        \
-                );                                                     \
-            });                                                        \
-        }                                                              \
-    } WFX_MW_INSTANCE(uniq);
+    namespace {                                                        \
+        struct WFX_MW_CLASS(uniq) {                                    \
+            WFX_MW_CLASS(uniq)() {                                     \
+                WFX::Shared::__WFXDeferredMiddleware.emplace_back([] { \
+                    __WFXApi->GetHttpAPIV1()->RegisterMiddleware(      \
+                        name, MakeMiddlewareEntry(callback, handle)    \
+                    );                                                 \
+                });                                                    \
+            }                                                          \
+        } WFX_MW_INSTANCE(uniq);                                       \
+    }
 
 #define WFX_INTERNAL_MW_REGISTER(name, callback)                       \
     WFX_INTERNAL_MW_REGISTER_IMPL(                                     \

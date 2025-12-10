@@ -41,12 +41,23 @@ void EpollConnectionHandler::Initialize(const std::string& host, int port)
     auto& osConfig      = config_.osSpecificConfig;
     auto& networkConfig = config_.networkConfig;
 
+    // Maximum valid 64-aligned slot count for uint32_t
+    constexpr std::uint32_t MAX_64_ALIGNED = 0xFFFF'FFC0u;
+
     // Round up to 64-bit boundary so every allocated bit always maps to valid storage
-    std::uint32_t roundedSlots = (networkConfig.maxConnections + 63) & ~63u;
-    connWords_ = roundedSlots >> 6;
+    // In simpler words, it rounds to the next 64 divisible number pretty much
+    std::uint64_t rounded = std::uint64_t(networkConfig.maxConnections) + 63;
+    rounded &= ~std::uint64_t(63);
+
+    // Clamp to avoid exceeding valid range
+    if(rounded > MAX_64_ALIGNED)
+        rounded = MAX_64_ALIGNED;
+
+    connSlots_ = std::uint32_t(rounded);
+    connWords_ = connSlots_ >> 6;
 
     // Connections
-    connections_ = std::make_unique<ConnectionContext[]>(roundedSlots);
+    connections_ = std::make_unique<ConnectionContext[]>(connSlots_);
     connBitmap_  = std::make_unique<std::uint64_t[]>(connWords_);
     // Events
     events_      = std::make_unique<epoll_event[]>(maxEvents_);
@@ -92,13 +103,9 @@ void EpollConnectionHandler::Initialize(const std::string& host, int port)
 
     // vvv Initialize timeout handler vvv
     timerWheel_.Init(
-        networkConfig.maxConnections,
+        connSlots_,
         1024, 1, TimeUnit::SECONDS,
         [this](std::uint32_t connId) {
-            // Get the connection index (and sanity check it)
-            if(connId >= config_.networkConfig.maxConnections)
-                return;
-
             ConnectionContext* ctx = &connections_[connId];
 
             // So the logic behind the if condition is, in normal sync path, if a connection is marked-
@@ -148,7 +155,7 @@ void EpollConnectionHandler::Initialize(const std::string& host, int port)
 void EpollConnectionHandler::SetEngineCallbacks(ReceiveCallback onData, CompletionCallback onComplete)
 {
     onReceive_  = std::move(onData);
-    onComplete_ = std::move(onComplete);
+    onAsyncCompletion_ = std::move(onComplete);
 }
 
 // vvv I/O Operations vvv
@@ -296,9 +303,10 @@ void EpollConnectionHandler::Close(ConnectionContext* ctx, bool forceClose)
 void EpollConnectionHandler::Run()
 {
     // Just a simple sanity check before we do anything
-    if(!onReceive_ || !onComplete_)
+    if(!onReceive_ || !onAsyncCompletion_)
         logger_.Fatal(
-            "[Epoll]: Member 'onReceive_' or 'onComplete_' was not initialized. Call 'SetEngineCallbacks' before calling 'Run'"
+            "[Epoll]: Member 'onReceive_' or 'onAsyncCompletion_' was not initialized."
+            " Call 'SetEngineCallbacks' before calling 'Run'"
         );
 
     while(running_) {
@@ -339,17 +347,13 @@ void EpollConnectionHandler::Run()
                 std::uint64_t connId  = 0;
 
                 while(timerHeap_.PopExpired(newTick, connId)) {
-                    // Sanity checks
-                    if(connId >= config_.networkConfig.maxConnections)
-                        continue;
-
                     ConnectionContext* ctx = &connections_[connId];
 
                     // Well, we are done with our timer operation so yeah
                     ctx->isAsyncTimerOperation = 0;
 
                     if(ctx->TryFinishCoroutines())
-                        onComplete_(ctx);
+                        onAsyncCompletion_(ctx);
                 }
 
                 // Because the async timer is one shot, update it just in case there exists more async-
@@ -734,17 +738,8 @@ void EpollConnectionHandler::Receive(ConnectionContext* ctx)
     }
 
     // Notify app
-    if(gotData) {
-        // auto task = onReceive_(ctx);
-
-        // // Start it immediately
-        // task.RunUntilSuspend();
-
-        // // Store for resuming later
-        // if(!task.IsDone())
-        //     ctx->masterCoroutine = std::move(task);
+    if(gotData)
         onReceive_(ctx);
-    }
 }
 
 void EpollConnectionHandler::SendFile(ConnectionContext* ctx)
@@ -928,13 +923,16 @@ void EpollConnectionHandler::ResumeStream(ConnectionContext* ctx)
 void EpollConnectionHandler::PollAgain(ConnectionContext* ctx, EventType eventType, std::uint32_t events)
 {
     ctx->eventType = eventType;
-            
+
     epoll_event ev{};
     ev.events   = events;
     ev.data.ptr = ctx;
-    
-    // If epoll fails, close the connection forcefully
-    if(epoll_ctl(epollFd_, EPOLL_CTL_MOD, ctx->socket, &ev) < 0)
+
+    // If epoll fails: Only force close on real errors (ignore EBADF/ENOENT which can happen during race)
+    if(
+        epoll_ctl(epollFd_, EPOLL_CTL_MOD, ctx->socket, &ev) < 0
+        && (errno != EBADF && errno != ENOENT)
+    )
         Close(ctx, true);
 }
 

@@ -16,20 +16,6 @@ using MiddlewareConfigOrder = const std::vector<std::string>&;
 using MiddlewareFactory     = std::unordered_map<MiddlewareName, MiddlewareEntry>;
 using MiddlewarePerRoute    = std::unordered_map<const TrieNode*, MiddlewareStack>;
 
-// So for async routes we need this to determine whether we are executing global-
-// -mw or per route middleware
-enum class MiddlewareLevel : std::uint8_t {
-    GLOBAL,
-    PER_ROUTE
-};
-
-struct MiddlewareContext {
-    MiddlewareType     type;  // Context of where mw is being used
-    MiddlewareLevel    level; // Global or Per-Route
-    std::uint16_t      index; // Index of mw where we left off
-    ConnectionContext* cctx;
-};
-
 // 1st parameter is whether we successfully executed all middleware or no
 // 2nd parameter is for async functionality
 using MiddlewareResult         = std::pair<bool, AsyncPtr>;
@@ -45,7 +31,7 @@ public:
     void RegisterPerRouteMiddleware(const TrieNode* node, MiddlewareStack mwStack);
 
     MiddlewareResult ExecuteMiddleware(const TrieNode* node, HttpRequest& req, Response& res,
-                            MiddlewareContext& ctx, MiddlewareBuffer optBuf = {});
+                            ConnectionContext* ctx, MiddlewareBuffer optBuf = {});
 
     // Using std::string because TOML loader returns vector<string>
     void LoadMiddlewareFromConfig(MiddlewareConfigOrder order);
@@ -58,8 +44,8 @@ private:
 
 private: // Helper functions
     MiddlewareResult ExecuteHelper(HttpRequest& req, Response& res, MiddlewareStack& stack,
-                        MiddlewareContext& ctx, MiddlewareBuffer optBuf);
-    MiddlewareFunctionResult ExecuteFunction(MiddlewareContext& mctx, MiddlewareEntry& entry, HttpRequest& req,
+                        ConnectionContext* ctx, MiddlewareBuffer optBuf);
+    MiddlewareFunctionResult ExecuteFunction(ConnectionContext* ctx, MiddlewareEntry& entry, HttpRequest& req,
                         Response& res, MiddlewareMeta meta);
 
     void FixInternalLinks(MiddlewareStack& stack);

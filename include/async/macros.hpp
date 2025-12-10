@@ -4,7 +4,7 @@
 #include "interface.hpp"
 
 // vvv Helper Macros vvv
-#define CoHelper(awaitable, returnPtr, onError, counter)      \
+#define CoAwaitHelper(awaitable, returnPtr, onError, counter) \
         if(Async::Await(__AsyncSelf, awaitable, returnPtr)) { \
             __AsyncSelf->SetState(counter);                   \
             return;                                           \
@@ -35,8 +35,8 @@
     }
 
 // vvv Await vvv
-#define CoAwait(awaitable, onError)               CoHelper(awaitable, static_cast<void*>(nullptr), onError, __COUNTER__)
-#define CoAwaitGet(awaitable, returnVar, onError) CoHelper(awaitable, &returnVar, onError, __COUNTER__)
+#define CoAwait(awaitable, onError)               CoAwaitHelper(awaitable, static_cast<void*>(nullptr), onError, __COUNTER__ + 1)
+#define CoAwaitGet(awaitable, returnVar, onError) CoAwaitHelper(awaitable, &returnVar, onError, __COUNTER__ + 1)
 
 // vvv Return vvv
 #define CoReturn(val)                                                                        \
@@ -48,7 +48,7 @@
         __AsyncSelf->Finish();                                                               \
         return;                                                                              \
     }                                                                                        \
-    while(0)
+    while(0);
 
 // vvv Misc Handling vvv
 #define CoGetError()     __AsyncSelf->GetError()

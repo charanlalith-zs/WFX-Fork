@@ -14,18 +14,6 @@
     #include <dlfcn.h>
 #endif
 
-// Helper Macros
-#define TRACK_MAKE(depth, type, level, index)              \
-    ((static_cast<std::uint32_t>(depth)  << 24) |          \
-      ((static_cast<std::uint32_t>(type)  & 0x0F) << 20) | \
-      ((static_cast<std::uint32_t>(level) & 0x0F) << 16) | \
-        static_cast<std::uint32_t>(index))
-
-#define TRACK_GET_DEPTH(v)   (static_cast<ExecutionLevel>(((v) >> 24) & 0xFF))
-#define TRACK_GET_TYPE(v)    (static_cast<MiddlewareType>(((v) >> 20) & 0x0F))
-#define TRACK_GET_LEVEL(v)   (static_cast<MiddlewareLevel>(((v) >> 16) & 0x0F))
-#define TRACK_GET_INDEX(v)   (static_cast<std::uint16_t>((v) & 0xFFFF))
-
 namespace WFX::Core {
 
 // Some internal enum stuff for connection header
@@ -35,13 +23,6 @@ enum ConnectionHeader : std::uint8_t {
     KEEP_ALIVE = 1 << 1,
     UPGRADE    = 1 << 2,
     ERROR      = 1 << 3,
-};
-
-// Used inside of ctx->trackBytes if needed by 'HandleSuccess'
-// Just an optimization so if we do have async code, we don't need to start from top again
-enum ExecutionLevel : std::uint8_t {
-    MIDDLEWARE,
-    RESPONSE
 };
 
 // vvv Main Functions vvv
@@ -71,7 +52,22 @@ void CoreEngine::Listen(const std::string& host, int port)
             this->HandleRequest(ctx);
         },
         [this](ConnectionContext* ctx) {
-            this->HandleResponse(ctx);
+            bool inResponse = (ctx->trackAsync.GetELevel() == ExecutionLevel::RESPONSE);
+            const TrieNode* route = nullptr;
+
+            if(!inResponse) {
+                const TrieNode* const* ptr =
+                    ctx->requestInfo->GetContext<const TrieNode*>("__IntrnlCtx_RouteNode");
+
+                if(!ptr || !*ptr)
+                    logger_.Fatal(
+                        "[CoreEngine]: RouteNode context missing/null inside 'CompletionCallback'"
+                    );
+
+                route = *ptr;
+            }
+
+            this->HandleSuccess(ctx, route);
         }
     );
     connHandler_->Run();
@@ -120,25 +116,9 @@ void CoreEngine::HandleRequest(ConnectionContext* ctx)
 
         case HttpParseState::PARSE_SUCCESS:
         {
-            // IMPORTANT:
             // After parsing, ctx->trackBytes becomes the compact state register used by-
-            // -'HandleSuccess' for async resumption IF needed that is. The layout is:
-            //
-            // 32-bit trackBytes:
-            // ┌─────────────────────────── 32 bits ──────────────────────────────┐
-            // │            HIGH 16 bits               │       LOW 16 bits        │
-            // ├───────────────────────────────────────┼──────────────────────────┤
-            // │  Depth (8) | Type (4) | Level (4)     │   Middleware index (16)  │
-            // └───────────────────────────────────────┴──────────────────────────┘
-            //
-            // Meaning:
-            // - Depth (8) : how deep we are in the execution path, used to decide whether-
-            //               -to continue middleware execution or jump back into user callback
-            // - Type  (4) :  encoded middleware type
-            // - Level (4) : current middleware layer being executed
-            // - Index (16): the specific middleware entry index
-            //
-            // For now reset ctx->trackBytes for it to be used in 'HandleSuccess'
+            // -'HandleSuccess' for async resumption IF needed that is
+            // For now reset ctx->trackBytes so ctx->trackAsync becomes zeroed out 'HandleSuccess'
             ctx->trackBytes = 0;
 
             // Version is important for Serializer to properly create a response
@@ -203,14 +183,19 @@ void CoreEngine::HandleRequest(ConnectionContext* ctx)
                     goto __HandleResponse;
                 }
 
-                // Before handing of control to 'HandleSuccess', setup ctx->trackBytes according to-
-                // -the format we decided above
-                ctx->trackBytes = TRACK_MAKE(
-                                    ExecutionLevel::MIDDLEWARE, MiddlewareType::LINEAR,
-                                    MiddlewareLevel::GLOBAL, 0
-                                );
+                // Before handing of control to 'HandleSuccess', setup ctx->trackAsync state for use
+                auto& trackAsync = ctx->trackAsync;
+                trackAsync.SetMType(MiddlewareType::LINEAR);
 
                 HandleSuccess(ctx, node);
+
+                // One important thing btw, 'HandleSuccess' requires 'node', which uk is fine
+                // The issue is, scheduler will not have access to 'node' nor it can query it (even if it can-
+                // -its just not performant). So we set req.context to contain this 'node' IF AND ONLY IF we haven't-
+                // -reached ExecutionLevel::RESPONSE, cuz till then 'node' is still required by 'HandleSuccess'
+                if(trackAsync.GetELevel() != ExecutionLevel::RESPONSE)
+                    reqInfo.SetContext("__IntrnlCtx_RouteNode", node);
+
                 return;
             }
 
@@ -272,36 +257,29 @@ void CoreEngine::HandleSuccess(ConnectionContext* ctx, const TrieNode* node)
     auto& req     = *ctx->requestInfo;
     auto& res     = *ctx->responseInfo;
 
-    // Track info
-    std::uint32_t trackBytes = ctx->trackBytes;
-
-    ExecutionLevel eLevel = TRACK_GET_DEPTH(trackBytes);
     Response userRes{&res, httpApi};
+
+    // Trackers
+    ExecutionLevel eLevel = ctx->trackAsync.GetELevel();
 
     if(eLevel == ExecutionLevel::RESPONSE)
         goto __HandleResponse;
 
     if(eLevel == ExecutionLevel::MIDDLEWARE) {
-        MiddlewareLevel mLevel = TRACK_GET_LEVEL(trackBytes);
-        MiddlewareType  mType  = TRACK_GET_TYPE(trackBytes);
-        std::uint16_t   mIndex = TRACK_GET_INDEX(trackBytes);
-
-        MiddlewareContext mctx{mType, mLevel, mIndex, ctx};
-
-        auto [success, ptr] = middleware_.ExecuteMiddleware(node, req, userRes, mctx, {});
+        auto [success, ptr] = middleware_.ExecuteMiddleware(node, req, userRes, ctx, {});
 
         if(!success) {
             // For failure, just handle response and be done with
             if(!ptr)
                 goto __HandleResponse;
 
-            // Its async, update track bytes according to mctx as it is updated in execute middleware
-            ctx->trackBytes = TRACK_MAKE(eLevel, mctx.type, mctx.level, mctx.index);
+            // Its async, let scheduler do its job at the backend
+            FinishRequest(ctx);
             return;
         }
         // Update 'eLevel' to be 'RESPONSE' level so the next time this shits called, we-
         // -directly jump to '__HandleResponse'
-        eLevel = ExecutionLevel::RESPONSE;
+        ctx->trackAsync.SetELevel(ExecutionLevel::RESPONSE);
     }
 
     // Sync, execute it right now

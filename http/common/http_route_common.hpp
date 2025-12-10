@@ -58,6 +58,13 @@ enum class MiddlewareAction : std::uint8_t {
     SKIP_NEXT  // Skip the next middleware in chain if any
 };
 
+// So for async routes we need this to determine whether we are executing global-
+// -mw or per route middleware
+enum class MiddlewareLevel : std::uint8_t {
+    GLOBAL,
+    PER_ROUTE
+};
+
 enum class MiddlewareType : std::uint8_t {
     LINEAR       = 1 << 0,  // For normal use case
     STREAM_CHUNK = 1 << 1,  // Streaming inbound chunks

@@ -49,7 +49,7 @@ public: // Helper functions
         if(it == context.end())
             return nullptr;
         
-        return std::any_cast<const T>(&(it->second));
+        return std::any_cast<T>(&(it->second));
     }
 
     template<typename T>

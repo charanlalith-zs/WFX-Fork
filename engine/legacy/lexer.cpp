@@ -33,13 +33,13 @@ char Lexer::peek(std::uint8_t offset)
 
 void Lexer::skip_spaces()
 {
-    while (SANITY_CHECK(cur_chr == ' ' || cur_chr == '\t' || cur_chr == '\n'))
+    while(SANITY_CHECK(cur_chr == ' ' || cur_chr == '\t' || cur_chr == '\n'))
         advance();
 }
 
 void Lexer::skip_single_line_comments()
 {
-    while (SANITY_CHECK(cur_chr != '\n'))
+    while(SANITY_CHECK(cur_chr != '\n'))
         advance();
     //skip the newline as well
     advance();
@@ -47,7 +47,7 @@ void Lexer::skip_single_line_comments()
 /**/
 void Lexer::skip_multi_line_comments()
 {
-    while (SANITY_CHECK(!(cur_chr == '*' && peek(1) == '/')))
+    while(SANITY_CHECK(!(cur_chr == '*' && peek(1) == '/')))
         advance();
 
     //skip '*' and '/'
@@ -60,7 +60,7 @@ void Lexer::lex_digits()
     const char* start_pos = &text[cur_pos];
     
     //Look only for digits -> 0..9
-    while (SANITY_CHECK(IS_DIGIT(cur_chr)))
+    while(SANITY_CHECK(IS_DIGIT(cur_chr)))
         advance();
     
     //When while loop breaks, it either hit '.' or some random character

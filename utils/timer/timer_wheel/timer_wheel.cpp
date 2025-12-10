@@ -1,6 +1,5 @@
 #include "timer_wheel.hpp"
 #include "utils/logger/logger.hpp"
-#include <cassert>
 
 #if defined(_MSC_VER)
     #include <intrin.h>
@@ -92,7 +91,10 @@ std::uint64_t TimerWheel::GetTick() const noexcept
 void TimerWheel::Schedule(std::uint32_t pos, std::uint64_t timeout)
 {
     // Sanity checks
-    assert(pos < cap_ && "TimerWheel.Schedule expected pos < capacity");
+    if(pos >= cap_)
+        Logger::GetInstance().Fatal(
+            "[TimerWheel]: 'Schedule' expected 'pos' to be less than wheel capacity, got: ", pos
+        );
 
     // First cancel if already scheduled
     Unlink(pos);
@@ -134,8 +136,11 @@ void TimerWheel::Schedule(std::uint32_t pos, std::uint64_t timeout)
 
 void TimerWheel::Cancel(std::uint32_t pos)
 {
-    // Sanity Checks
-    assert(pos < cap_);
+    if(pos >= cap_)
+        Logger::GetInstance().Fatal(
+            "[TimerWheel]: 'Cancel' expected 'pos' to be less than wheel capacity, got: ", pos
+        );
+
     Unlink(pos);
     ClearSlot(pos);
 }
@@ -168,8 +173,11 @@ void TimerWheel::Tick(std::uint64_t nowTick)
 // vvv Helper Functions vvv
 void TimerWheel::Unlink(std::uint32_t pos)
 {
+    // Sanity checks
     if(pos >= cap_)
-        return;
+        Logger::GetInstance().Fatal(
+            "[TimerWheel]: 'Unlink' expected 'pos' to be less than wheel capacity, got: ", pos
+        );
 
     SlotMeta& m = meta_[pos];
     if(m.bucket >= slots_)

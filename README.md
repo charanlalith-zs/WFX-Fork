@@ -34,7 +34,6 @@ Epoll / IoUring / IOCP is the heartbeat.
 Each shared module is self-contained and linked into the core runtime.
 
 - **utils/** - logging, crypto, memory, file I/O, etc.<br>
-- **async/** - custom coroutine functions without the use of C++20 stuff.<br>
 
 ## Build
 

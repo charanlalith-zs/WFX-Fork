@@ -74,11 +74,11 @@ private: // Misc
     FileCache&         fileCache_  = FileCache::GetInstance();
     BufferPool&        pool_       = BufferPool::GetInstance();
 
-    IpLimiter          ipLimiter_  = {pool_};
-    ReceiveCallback    onReceive_  = {};
-    CompletionCallback onComplete_ = {};
-    std::atomic<bool>  running_    = true;
-    bool               useHttps_   = false;
+    IpLimiter          ipLimiter_         = {pool_};
+    ReceiveCallback    onReceive_         = {};
+    CompletionCallback onAsyncCompletion_ = {};
+    std::atomic<bool>  running_           = true;
+    bool               useHttps_          = false;
 
 private: // Constexpr stuff
     constexpr static char    CHUNK_END[]           = "0\r\n\r\n";
@@ -106,6 +106,7 @@ private: // Connection Context
     std::unique_ptr<ConnectionContext[]> connections_   = nullptr;
     std::unique_ptr<std::uint64_t[]>     connBitmap_    = nullptr;
     std::uint32_t                        connWords_     = 0;
+    std::uint32_t                        connSlots_     = 0;
     std::uint32_t                        connLastIndex_ = 0;
 
     // TODO: FOR DEBUG ONLY, REMOVE IT AFTER

@@ -34,17 +34,17 @@ void HttpMiddleware::RegisterPerRouteMiddleware(const TrieNode* node, Middleware
 
 MiddlewareResult HttpMiddleware::ExecuteMiddleware(
     const TrieNode* node, HttpRequest& req, Response& res,
-    MiddlewareContext& ctx, MiddlewareBuffer optBuf
+    ConnectionContext* ctx, MiddlewareBuffer optBuf
 ) {
-    if(ctx.level == MiddlewareLevel::GLOBAL) {
+    if(ctx->trackAsync.GetMLevel() == MiddlewareLevel::GLOBAL) {
         // Initially execute the global middleware stack
         auto [success, ptr] = ExecuteHelper(req, res, middlewareGlobalCallbacks_, ctx, optBuf);
         if(!success)
             return {false, ptr};
 
         // Reset the context to prepare for per route if it exists
-        ctx.index = 0;
-        ctx.level = MiddlewareLevel::PER_ROUTE;
+        ctx->trackAsync.SetMIndex(0);
+        ctx->trackAsync.SetMLevel(MiddlewareLevel::PER_ROUTE);
     }
 
     // We assume that no node means no per-route middleware
@@ -104,7 +104,7 @@ void HttpMiddleware::DiscardFactoryMap()
 // vvv Helper Functions vvv
 MiddlewareResult HttpMiddleware::ExecuteHelper(
     HttpRequest& req, Response& res, MiddlewareStack& stack,
-    MiddlewareContext& ctx, MiddlewareBuffer optBuf
+    ConnectionContext* ctx, MiddlewareBuffer optBuf
 ) {
     std::size_t size = stack.size();
     if(size == 0)
@@ -112,17 +112,38 @@ MiddlewareResult HttpMiddleware::ExecuteHelper(
 
     std::uint16_t head = MiddlewareEntry::END;
 
+    auto& trackAsync = ctx->trackAsync;
+    auto mType  = trackAsync.GetMType();
+    auto mIndex = trackAsync.GetMIndex();
+
     // Select the correct 'next' pointer for this middleware type
-    auto next = MiddlewareEntryNext(ctx.type);
+    auto next = MiddlewareEntryNext(mType);
 
     // Check if we already executed this beforehand, we just need to continue from where we left off
-    if(ctx.index > 0) {
-        head = ctx.index;
+    if(mIndex > 0) {
+        head = mIndex;
+
+        // But before we jump to executing middleware, we need to consider previous async middlewares-
+        // -return value
+        auto lastAction = *trackAsync.GetMAction();
+        switch(lastAction) {
+            case MiddlewareAction::CONTINUE:
+                break; // Proceed normally
+
+            case MiddlewareAction::SKIP_NEXT:
+                if(head != MiddlewareEntry::END)
+                    head = stack[head].*next;
+                break;
+
+            case MiddlewareAction::BREAK:
+                return {false, nullptr};
+        }
+
         goto __ContinueMiddleware;
     }
 
     // Fresh start, find first usable middleware
-    head = (stack[0].handled & static_cast<std::uint8_t>(ctx.type)) ? 0 : (stack[0].*next);
+    head = (stack[0].handled & static_cast<std::uint8_t>(mType)) ? 0 : (stack[0].*next);
 
     // No middleware for this type
     if(head == MiddlewareEntry::END)
@@ -134,7 +155,7 @@ __ContinueMiddleware:
 
     while(i != MiddlewareEntry::END) {
         MiddlewareEntry& entry = stack[i];
-        MiddlewareMeta   meta  = {ctx.type, optBuf};
+        MiddlewareMeta   meta  = {mType, optBuf};
 
         // Execute
         auto [action, asyncPtr] = ExecuteFunction(ctx, entry, req, res, meta);
@@ -143,7 +164,7 @@ __ContinueMiddleware:
         // -will run in scheduler seperate from this middleware chain, after it completes we need to invoke-
         // -the next valid scheduler
         if(asyncPtr) {
-            ctx.index = entry.*next;
+            trackAsync.SetMIndex(entry.*next);
             return {false, asyncPtr};
         }
 
@@ -171,7 +192,7 @@ __ContinueMiddleware:
 }
 
 MiddlewareFunctionResult HttpMiddleware::ExecuteFunction(
-    MiddlewareContext& mctx, MiddlewareEntry& entry,
+    ConnectionContext* ctx, MiddlewareEntry& entry,
     HttpRequest& req, Response& res, MiddlewareMeta meta
 ) {
     auto& logger = WFX::Utils::Logger::GetInstance();
@@ -192,11 +213,10 @@ MiddlewareFunctionResult HttpMiddleware::ExecuteFunction(
     // For async function, the return value is stored in AsyncPtr '__Action' value
     // Yeah ik, weird
     auto* httpApi = WFX::Shared::GetHttpAPIV1();
-    auto* cctx    = mctx.cctx;
     auto& async   = std::get<AsyncMiddlewareType>(entry.mw);
 
     // Set context (type erased) at http api side before calling async callback
-    httpApi->SetGlobalPtrData(static_cast<void*>(cctx));
+    httpApi->SetGlobalPtrData(static_cast<void*>(ctx));
 
     auto ptr = async(req, res, meta);
     if(!ptr)
@@ -204,11 +224,7 @@ MiddlewareFunctionResult HttpMiddleware::ExecuteFunction(
             "[HttpMiddleware]: Null coroutine detected in executed async middleware. Type: ", (int)meta.type
         );
 
-    // Temporary context in case async was completed in sync
-    // If it didnt, then we will clear the context and set it at scheduler side
-    MiddlewareAction action;
-
-    ptr->SetReturnPtr(static_cast<void*>(&action));
+    ptr->SetReturnPtr(static_cast<void*>(ctx->trackAsync.GetMAction()));
     ptr->Resume();
 
     // Reset to remove dangling references
@@ -222,16 +238,16 @@ MiddlewareFunctionResult HttpMiddleware::ExecuteFunction(
 
     // We were able to finish async in sync, coroutine stack should only have 1 element, itself
     // If not, big no no
-    if(cctx->coroStack.size() > 1)
+    if(ctx->coroStack.size() > 1)
         logger.Fatal(
             "[HttpMiddleware]: Coroutine stack imbalance detected after async middleware execution."
             " Type: ", (int)meta.type
         );
 
     // Clear out the coroutine stack for future middlewares
-    cctx->coroStack.clear();
+    ctx->coroStack.clear();
 
-    return {static_cast<MiddlewareAction>(action), nullptr};
+    return {*ctx->trackAsync.GetMAction(), nullptr};
 }
 
 void HttpMiddleware::FixInternalLinks(MiddlewareStack& stack)
