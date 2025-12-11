@@ -25,6 +25,12 @@ ExternalProject_Add(openssl_lts_build
     URL "https://github.com/openssl/openssl/releases/download/openssl-3.5.4/openssl-3.5.4.tar.gz"
     URL_HASH SHA256=967311f84955316969bdb1d8d4b983718ef42338639c621ec4c34fddef355e99
     DOWNLOAD_EXTRACT_TIMESTAMP true
+
+    # Because Ninja is more stricter than make, because these files exist after we run the build
+    # But Ninja aint gon care about all those stuff, IT NEEDS THEM
+    BUILD_BYPRODUCTS 
+        "${OPENSSL_INSTALL_DIR}/lib/libssl.so"
+        "${OPENSSL_INSTALL_DIR}/lib/libcrypto.so"
     
     # We use cmake -E env to pass optimization flags to OpenSSL's non-CMake build system.
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env "CFLAGS=${OPENSSL_OPT_FLAGS}"
