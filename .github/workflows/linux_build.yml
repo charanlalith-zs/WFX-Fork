@@ -58,3 +58,18 @@ jobs:
 
     - name: Build
       run: cmake --build build
+
+  # Collector
+  ci-success:
+    name: WFX Linux Build Success
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [build] # Wait for the 'build' matrix to finish
+    steps:
+      - name: Check Status
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "Build matrix failed."
+            exit 1
+          fi
+          echo "All builds passed!"
