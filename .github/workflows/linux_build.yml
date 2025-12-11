@@ -21,10 +21,6 @@ jobs:
             cc: clang
             cxx: clang++
 
-    env:
-      CCACHE_DIR: "${{ github.workspace }}/.ccache"
-      CCACHE_MAXSIZE: "500M"
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -32,28 +28,22 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake build-essential clang ninja-build ccache
+        sudo apt-get install -y cmake build-essential clang ninja-build
 
-    - name: Restore Compiler Cache
+    # Save the entire build directory cuz i cannot waste github run 'time', i'm poor
+    - name: Restore build/ cache
       uses: actions/cache@v3
       with:
-        path: .ccache
-        # Key includes CMake files so OpenSSL rebuilds if version changes
-        key: ccache-${{ matrix.compiler }}-${{ hashFiles('**/CMakeLists.txt', 'cmake/*.cmake') }}
+        path: build
+        key: build-${{ matrix.compiler }}-${{ hashFiles('**/CMakeLists.txt', 'cmake/*.cmake') }}
         restore-keys: |
-          ccache-${{ matrix.compiler }}-
-
-    # Forces 'ssl_openssl.cmake' ExternalProject to use ccache
-    - name: Setup Compiler Masquerade
-      run: echo "/usr/lib/ccache" >> $GITHUB_PATH
+          build-${{ matrix.compiler }}-
 
     - name: Configure
       run: |
         cmake -S . -B build -G Ninja \
           -DCMAKE_C_COMPILER=${{ matrix.cc }} \
           -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
-          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
           -DCMAKE_BUILD_TYPE=Release
 
     - name: Build
