@@ -2,47 +2,52 @@
 
 > Scene opens: two developers staring at a terminal. One of them hasn't slept in 36 hours :(
 
-**Dev 1:** Dawg... what even *is* this thing?<br>
-**Dev 2:** Haven't you heard about it?<br>
-**Dev 1:** No? Tf is WFX?<br>
-**Dev 2:** Weird Framework<br>
-**Dev 1:** ...wat?<br>
-**Dev 2:** eXactly (.\_.)<br>
-**Dev 1:** (.\_.)<br>
+**Dev 1:** Dawg... what even *is* this thing?  
+**Dev 2:** Haven't you heard about it?  
+**Dev 1:** No? Tf is WFX?  
+**Dev 2:** Weird Framework  
+**Dev 1:** ...wat?  
+**Dev 2:** eXactly (.\_.)  
+**Dev 1:** (.\_.)  
 
-**Silence...** <br>The fans sound like a jet engine. The build somehow finishes.
+**Silence...**   
+The fans sound like a jet engine. The build somehow finishes.
 Somewhere, a socket coughs itself awake.
 No logs, no confetti, just a binary sitting there opening its eyes for the first time.
 
 ## Architecture
 
-Everything runs on one event loop.  
-Epoll / IoUring / IOCP is the heartbeat.  
+Everything runs on one event loop [Epoll / IoUring / IOCP]. Flow is quite simple: request -> event-loop (read from socket) -> core-engine (runs callbacks and creates response) -> event-loop (write to socket)  
 
 ## Folder Structure
 
-**cli/** - command-line tools: build, new, dev, doctor<br>
-**config/** - TOML loader<br>
-**engine/** - runtime core, template execution<br>
-**http/** - routing, parser, serializer, response machinery, etc.<br>
-**os_specific/** - Linux and Windows platform code<br>
-**shared/** - internal shared logic<br>
-**include/** - public headers for user extensions<br>
+**cli/** - command-line tools: build, new, dev, doctor  
+**config/** - TOML loader  
+**engine/** - runtime core, template execution  
+**http/** - routing, parser, serializer, response machinery, etc.  
+**os_specific/** - Linux and Windows platform code  
+**shared/** - internal shared logic  
+**include/** - public headers for user extensions  
 
 ## Shared Libraries (`lib/`)
 
 Each shared module is self-contained and linked into the core runtime.
 
-- **utils/** - logging, crypto, memory, file I/O, etc.<br>
+- **utils/** - logging, crypto, memory, file I/O, etc.  
 
 ## Build
+
+Some dependencies which need to be resolved before building engine:
+
+- **Linux:** `sudo apt install -y cmake build-essential ninja-build`
+- **C++ Standard:** C++17
 
 Follow each command step by step to build the engine binary:
 
 ```bash
  - git clone https://github.com/Altered-commits/WFX.git
  - cd wfx
- - cmake -S . -B build
+ - cmake -S . -B build -G Ninja
  - cmake --build build
 ```
 
@@ -53,16 +58,6 @@ Now that the engine binary has been created, follow these steps to use `wfx`:
 #### Linux / macOS
 ```bash
  - mv wfx ..
- - cd ..
-```
-#### Windows (PowerShell)
-```bash
- - Move-Item wfx ..
- - Set-Location ..
-```
-#### Windows (CMD)
-```bash
- - move wfx ..
  - cd ..
 ```
 

@@ -2,6 +2,7 @@
 .vscode
 
 # Build files
+build/
 BuildMinGW/
 BuildGCC/
 BuildGCCDebug/
@@ -11,3 +12,11 @@ Release/
 
 # Internal
 ignore/
+
+# Binary artifacts
+wfx
+wfx.toml
+toolchain.toml
+
+# Python env
+.venv/
