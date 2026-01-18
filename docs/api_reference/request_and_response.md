@@ -70,7 +70,7 @@ Below are the primary members exposed by the `Request` structure.
 
     **Example route**:  
     ```cpp
-    WFX_GET("/users/<int>/posts/<uint>", [](Request& req, Response& res) {
+    WFX_GET("/users/<int>/posts/<uint>", [](Request& req, Respons& res) {
         /* ... */
     });
     ```
@@ -242,7 +242,7 @@ Below are the primary methods exposed by `Response`.
     - `SendTemplate(std::string&& path, Json&& ctx = {})`
 
     The optional JSON context is provided to the template renderer to populate dynamic content.  
-    If the specified template cannot be found, the engine will automatically send a **404 "Template Not Found"** response.
+    If the specified template cannot be found, the engine will automatically send a **404 Template Not Found** response.
 
     **Example**:
     ```cpp

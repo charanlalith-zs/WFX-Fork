@@ -37,7 +37,7 @@ static void ScaffoldProject(const std::string& projectName)
 
 project(user_plugin)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Output directory
@@ -64,6 +64,7 @@ function(configure_compile target)
             -fPIC
             $<$<CONFIG:Release>:
                 -O3
+                -march=native
                 -fvisibility=hidden
                 -fvisibility-inlines-hidden
                 -ffunction-sections
@@ -274,15 +275,15 @@ extern "C" {
     // 4. Code example
     CreateFile(projBase / "src/main.cpp", R"cxx(#include <http/routes.hpp>
 
-WFX_GET("/", [](Request& req, Response& res) {
+WFX_GET("/", [](Request& req, Response res) {
     res.SendTemplate("index.html");
 });
 
-WFX_GET("/text", [](Request& req, Response& res) {
+WFX_GET("/text", [](Request& req, Response res) {
     res.SendText("Hello from WFX :)");
 });
 
-WFX_GET("/json", [](Request& req, Response& res) {
+WFX_GET("/json", [](Request& req, Response res) {
     res.SendJson(Json::object({
         {"WFX says", "Hello :)"}
     }));

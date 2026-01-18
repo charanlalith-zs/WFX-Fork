@@ -6,7 +6,6 @@
 #include "utils/backport/move_only_function.hpp"
 #include "utils/crypt/hash.hpp"
 #include "utils/rw_buffer/rw_buffer.hpp"
-#include "async/interface.hpp"
 
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
@@ -77,7 +76,6 @@ enum class ConnectionState : std::uint8_t {
 // Forward declare it so compilers won't cry
 struct ConnectionContext;
 
-using CoroutineStack     = std::vector<Async::CoroutinePtr>;
 using ReceiveCallback    = std::function<void(ConnectionContext*)>;
 using CompletionCallback = std::function<void(ConnectionContext*)>;
 
@@ -102,32 +100,33 @@ enum ExecutionLevel : std::uint8_t {
 
 // For async tracking without having to make engine / middleware async themselves
 struct AsyncTrack {
-    std::uint32_t trackBytes = 0;
+    std::uint8_t  mAction;
+    std::uint8_t  levels;
+    std::uint16_t mIndex;
 
-    // Top 8 bits (bits 31..24) - addressable MiddlewareAction
-    MiddlewareAction* GetMAction() { return reinterpret_cast<MiddlewareAction*>(&trackBytes); }
+    // Get the address of the 8-bit action field directly
+    MiddlewareAction* GetMAction() { 
+        return reinterpret_cast<MiddlewareAction*>(&mAction); 
+    }
 
-    // Bits 23..22 (2 bits) - Execution level
-    ExecutionLevel GetELevel() const { return static_cast<ExecutionLevel>((trackBytes >> 22) & 0x3u); }
+    // Execution Level: Upper 4 bits
+    ExecutionLevel GetELevel() const { 
+        return static_cast<ExecutionLevel>((levels >> 4) & 0x0F); 
+    }
     void SetELevel(ExecutionLevel v) {
-        trackBytes = (trackBytes & ~(0x3u << 22)) | ((static_cast<std::uint32_t>(v) & 0x3u) << 22);
+        levels = (levels & 0x0F) | ((static_cast<std::uint8_t>(v) & 0x0F) << 4);
     }
 
-    // Bits 21..19 (3 bits) - Middleware type
-    MiddlewareType GetMType() const { return static_cast<MiddlewareType>((trackBytes >> 19) & 0x7u); }
-    void SetMType(MiddlewareType v) {
-        trackBytes = (trackBytes & ~(0x7u << 19)) | ((static_cast<std::uint32_t>(v) & 0x7u) << 19);
+    // Middleware Level: Lower 4 bits
+    MiddlewareLevel GetMLevel() const { 
+        return static_cast<MiddlewareLevel>(levels & 0x0F); 
     }
-
-    // Bits 18..17 (2 bits) - Middleware level
-    MiddlewareLevel GetMLevel() const { return static_cast<MiddlewareLevel>((trackBytes >> 17) & 0x3u); }
     void SetMLevel(MiddlewareLevel v) {
-        trackBytes = (trackBytes & ~(0x3u << 17)) | ((static_cast<std::uint32_t>(v) & 0x3u) << 17);
+        levels = (levels & 0xF0) | (static_cast<std::uint8_t>(v) & 0x0F);
     }
-
-    // Bits 15..0 (16 bits) - Index
-    std::uint16_t GetMIndex() const { return static_cast<std::uint16_t>(trackBytes & 0xFFFFu); }
-    void SetMIndex(std::uint16_t idx) { trackBytes = (trackBytes & ~0xFFFFu) | (idx & 0xFFFFu); }
+    
+    std::uint16_t GetMIndex() const { return mIndex; }
+    void SetMIndex(std::uint16_t idx) { mIndex = idx; }
 };
 
 // Simply to assert that eventType must exist in anything related to connection-
@@ -162,16 +161,16 @@ struct ConnectionContext : public ConnectionTag {
     void*                sslConn       = nullptr;  // 8 bytes
     WFX::Utils::RWBuffer rwBuffer;                 // 16 bytes
 
-    WFXSocket       socket             = -1;       // 4 | 8 bytes
-    std::uint32_t   generationId       = 1;        // 4 bytes (0 is specially reserved)
-                                                   // 4 bytes padded
-    StreamGenerator streamGenerator    = {};       // 8 bytes
-    HttpRequest*    requestInfo        = nullptr;  // 8 bytes
-    HttpResponse*   responseInfo       = nullptr;  // 8 bytes (Async functions require larger scope)
-    FileInfo*       fileInfo           = nullptr;  // 8 bytes
-    WFXIpAddress    connInfo;                      // 20 bytes
-    std::uint32_t   expectedBodyLength = 0;        // 4 bytes
-    CoroutineStack  coroStack;                     // 24 bytes
+    WFXSocket          socket             = -1;       // 4 | 8 bytes
+    std::uint32_t      generationId       = 1;        // 4 bytes (0 is specially reserved)
+                                                      // 4 bytes padded
+    StreamGenerator    streamGenerator    = {};       // 8 bytes
+    HttpRequest*       requestInfo        = nullptr;  // 8 bytes
+    HttpResponse*      responseInfo       = nullptr;  // 8 bytes (Async functions require larger scope)
+    FileInfo*          fileInfo           = nullptr;  // 8 bytes
+    WFXIpAddress       connInfo;                      // 20 bytes
+    std::uint32_t      expectedBodyLength = 0;        // 4 bytes
+    Async::GenericTask parentCoro{};                  // 8 bytes
 
 public: // Helper functions
     void ResetContext();
@@ -183,8 +182,8 @@ public: // Helper functions
     HttpParseState  GetParseState()      const;
     ConnectionState GetConnectionState() const;
 
-    bool IsAsyncOperation();
-    bool TryFinishCoroutines();
+    bool          IsAsyncOperation() const;
+    Async::Status TryFinishCoroutines();
 };
 static_assert(sizeof(ConnectionContext) <= 128, "ConnectionContext must STRICTLY be less than or equal to 128 bytes.");
 
